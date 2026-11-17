@@ -209,6 +209,8 @@ const iconMap = {
   '/admin/quotas': 'credit-card',
   '/admin/datasources': 'database',
   '/admin/interfaces': 'code',
+  // 源插件（热更新）：用 plug 图标——这个入口管的是"插上/拔掉一个源"
+  '/admin/plugins': 'plug',
   '/admin/usage-logs': 'list',
   '/admin/redeem-codes': 'ticket',
   '/admin/monitor': 'activity',

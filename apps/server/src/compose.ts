@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { TtlCache, Upstream, createLogger, loadConfig, type Config, type Logger } from '@loomproxy/kernel'
 import {
+  seedBuiltinSettings,
   DbApiKeys,
   DbCallLogs,
   DbDataSources,
@@ -64,13 +65,6 @@ const BUILTIN_ROLES = [
   { code: 'user', name: '普通用户', description: '基础用户' },
 ]
 
-/** 内置设置项：与 Go 版 seed 同名的三档（公告/维护/公开榜放行） */
-const BUILTIN_SETTINGS = [
-  { key: 'announcement', type: 'string' as const, default: '', description: '站内公告（空 = 无公告）' },
-  { key: 'maintenance_mode', type: 'bool' as const, default: 'false', description: '维护模式：数据面一律 503，管理员除外' },
-  { key: 'rank_public_sources', type: 'string' as const, default: '', description: '公开榜放行的数据源（逗号分隔，空 = 全不放行）' },
-]
-
 export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
   // env 只读一次：配置加载与账号初始化必须看同一份（否则注入给测试的 ADMIN_PASSWORD 读不到自己）
   const env = opts.env ?? process.env
@@ -83,7 +77,8 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
   db.migrate()
 
   const settings = new DbSettings(db)
-  settings.register(BUILTIN_SETTINGS)
+  // 内置设置：键/初值/类型/说明与 Go 的 db/seed.go 逐条对齐（29 条），幂等且不覆盖管理员改过的值
+  seedBuiltinSettings(settings, (m) => logger.info(m))
   const dataSources = new DbDataSources(db)
   const users = new DbUsers(db)
   const roles = new DbRoles(db)
@@ -104,7 +99,8 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
   for (const r of BUILTIN_ROLES) {
     if (!roles.list().some((x) => x.code === r.code)) roles.create(r)
   }
-  const defaultPlan = plans.list()[0] ?? plans.create({ name: '基础版', code: 'basic', description: '默认套餐' })
+  const defaultPlan = plans.list()[0] ?? // 与内置设置 default_quota_plan=free 对齐（否则"新用户默认套餐"这个键指向一个不存在的 code）
+    plans.create({ name: '免费版', code: 'free', description: '默认套餐' })
   const adminName = (env['ADMIN_USERNAME'] ?? 'admin').trim().toLowerCase()
   const generated = !env['ADMIN_PASSWORD'] ? randomBytes(9).toString('base64url') : ''
   const adminPass = env['ADMIN_PASSWORD'] ?? generated
