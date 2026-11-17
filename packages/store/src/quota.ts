@@ -106,6 +106,29 @@ export class DbQuota {
     )?.n ?? 0
   }
 
+  // ---- 汇总读数（管理员视角 / 首页看板） ----
+  usedTodayAll(source: string, sinceIso: string): number {
+    return this.db.get<{ n: number }>(
+      'SELECT COALESCE(SUM(cost), 0) AS n FROM quota_usage_logs WHERE group_code = ? AND created_at >= ?',
+      source, sinceIso,
+    )?.n ?? 0
+  }
+
+  activeUsersForSource(source: string, sinceIso: string): number {
+    return this.db.get<{ n: number }>(
+      'SELECT COUNT(DISTINCT user_id) AS n FROM quota_usage_logs WHERE group_code = ? AND created_at >= ?',
+      source, sinceIso,
+    )?.n ?? 0
+  }
+
+  activeUsersAll(sinceIso: string): number {
+    return this.db.get<{ n: number }>('SELECT COUNT(DISTINCT user_id) AS n FROM quota_usage_logs WHERE created_at >= ?', sinceIso)?.n ?? 0
+  }
+
+  callCountSince(sinceIso: string): number {
+    return this.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM api_call_logs WHERE created_at >= ?', sinceIso)?.n ?? 0
+  }
+
   appendUsage(row: { user_id: number; username: string; group_code: string; action: string; cost: number }): void {
     this.db.run(
       'INSERT INTO quota_usage_logs (user_id, username, group_code, "interface", cost, created_at) VALUES (?,?,?,?,?,?)',

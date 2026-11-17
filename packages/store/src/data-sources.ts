@@ -3,6 +3,9 @@
 import type { SourceMeta } from '@loomproxy/contract'
 
 export type DataSourceRow = {
+  /** 行 id（内存实现不带；DB 行带） */
+  id?: number
+  description?: string
   name: string
   display_name: string
   category: string

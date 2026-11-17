@@ -373,11 +373,11 @@ test('额度域：授权即限额、超了 429、成功记账进流水（一次�
     quota.upsertCost({ group_code: 'demo_one', interface: 'search', cost: 1 })
     quota.grant(plan.id, 'source', 'demo_one', 1)
 
-    const first = await app.inject({ method: 'GET', url: '/demo_one/search?key=a', headers: { authorization: `Bearer ${adminToken()}` } })
+    const first = await app.inject({ method: 'GET', url: '/demo_one/search?key=a', headers: { authorization: `Bearer ${userToken()}` } })
     assert.equal(first.statusCode, 200)
 
     // 换搜索词（绕开去重窗口）再打：限额 1 用完了
-    const second = await app.inject({ method: 'GET', url: '/demo_one/search?key=b', headers: { authorization: `Bearer ${adminToken()}` } })
+    const second = await app.inject({ method: 'GET', url: '/demo_one/search?key=b', headers: { authorization: `Bearer ${userToken()}` } })
     assert.equal(second.statusCode, 429)
     assert.match((second.json() as { msg: string }).msg, /额度已用完/)
 
@@ -388,10 +388,25 @@ test('额度域：授权即限额、超了 429、成功记账进流水（一次�
     assert.equal(page.list[0]?.interface, 'search')
     assert.equal(page.list[0]?.cost, 1)
 
-    // 看板：限额/已用/剩余
-    const dash = await app.inject({ method: 'GET', url: '/quota/dashboard', headers: { authorization: `Bearer ${adminToken()}` } })
-    const rows = (dash.json() as { data: { rows: Array<{ source: string; limit: number; used: number; remaining: number }> } }).data.rows
-    assert.deepEqual(rows, [{ source: 'demo_one', limit: 1, used: 1, remaining: 0 }])
+    // 看板（普通用户视角）：形状照 Go 的 DashboardResponse，源卡读 effective_total/used_today/remaining/usage_pct
+    const dash = await app.inject({ method: 'GET', url: '/quota/dashboard', headers: { authorization: `Bearer ${userToken()}` } })
+    const body = (dash.json() as {
+      data: {
+        is_admin: boolean
+        plan_name: string
+        sources: Array<{ source_code: string; effective_total: number; used_today: number; remaining: number; usage_pct: number; next_reset: string }>
+      }
+    }).data
+    assert.equal(body.is_admin, false)
+    assert.equal(body.plan_name, '基础版')
+    assert.equal(body.sources.length, 1, '非管理员只见套餐授权的源')
+    const card = body.sources[0]!
+    assert.equal(card.source_code, 'demo_one')
+    assert.equal(card.effective_total, 1)
+    assert.equal(card.used_today, 1)
+    assert.equal(card.remaining, 0)
+    assert.equal(card.usage_pct, 100)
+    assert.match(card.next_reset, /^\d{4}\/\d{1,2}\/\d{1,2} \d{2}:\d{2}:00$/)
   } finally {
     await app.close()
     rmSync(root, { recursive: true, force: true })

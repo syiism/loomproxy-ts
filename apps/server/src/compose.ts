@@ -11,6 +11,7 @@ import {
   DbRoles,
   DbSessions,
   DbQuota,
+  DbSourceConfigs,
   DbSettings,
   DbUsers,
   SqliteDb,
@@ -41,6 +42,7 @@ export type Composed = {
   apiKeys: DbApiKeys
   callLogs: DbCallLogs
   quota: DbQuota
+  sourceConfigs: DbSourceConfigs
 }
 
 /** 内置角色：面板与 access 判定都按 code 读（admin/vip/user） */
@@ -78,6 +80,7 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
   const apiKeys = new DbApiKeys(db)
   const callLogs = new DbCallLogs(db)
   const quota = new DbQuota(db)
+  const sourceConfigs = new DbSourceConfigs(db)
 
   // ---- 播种：角色 → 默认套餐 → 管理员 ----
   for (const r of BUILTIN_ROLES) {
@@ -143,6 +146,7 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
     apiKeys,
     callLogs,
     quota,
+    sourceConfigs,
   })
-  return { config, app, db, host, registry, settings, dataSources, users, roles, plans, sessions, apiKeys, callLogs, quota }
+  return { config, app, db, host, registry, settings, dataSources, users, roles, plans, sessions, apiKeys, callLogs, quota, sourceConfigs }
 }

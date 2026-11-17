@@ -6,6 +6,7 @@ import type { Config, Logger, Upstream } from '@loomproxy/kernel'
 import type {
   ApiKeyStore,
   DbQuota,
+  DbSourceConfigs,
   CallLogStore,
   DataSourceStore,
   PlanStore,
@@ -35,6 +36,7 @@ export type ApiDeps = {
   apiKeys?: ApiKeyStore
   callLogs?: CallLogStore
   quota?: DbQuota
+  sourceConfigs?: DbSourceConfigs
   ledger?: Ledger
   limiter?: RateLimiter
 }
@@ -69,9 +71,8 @@ export function buildServer(deps: ApiDeps): FastifyInstance {
     ...(deps.plans ? { plans: deps.plans } : {}),
     ...(deps.sessions ? { sessions: deps.sessions } : {}),
     ...(deps.apiKeys ? { apiKeys: deps.apiKeys } : {}),
-    ...(deps.users ? { users: deps.users } : {}),
     ...(deps.quota ? { quota: deps.quota } : {}),
-    ...(deps.quota ? { quota: deps.quota } : {}),
+    ...(deps.sourceConfigs ? { sourceConfigs: deps.sourceConfigs } : {}),
     ...(deps.settings ? { settings: deps.settings } : {}),
     ...(deps.callLogs ? { callLogs: deps.callLogs } : {}),
   })
@@ -92,6 +93,7 @@ export function buildServer(deps: ApiDeps): FastifyInstance {
     ...(deps.users ? { users: deps.users } : {}),
     ...(deps.quota ? { quota: deps.quota } : {}),
     ...(deps.quota ? { quota: deps.quota } : {}),
+    ...(deps.sourceConfigs ? { sourceConfigs: deps.sourceConfigs } : {}),
   })
 
   // catch-all：新插件加载完立刻可用，不需要 removeRoute/addRoute

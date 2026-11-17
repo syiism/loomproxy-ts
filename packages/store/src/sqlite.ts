@@ -162,6 +162,18 @@ CREATE TABLE IF NOT EXISTS quota_costs (
   updated_at TEXT NOT NULL,
   UNIQUE (group_code, "interface")
 );
+CREATE TABLE IF NOT EXISTS platform_source_configs (
+  source_name TEXT PRIMARY KEY,
+  base_url TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS user_source_configs (
+  user_id INTEGER NOT NULL,
+  source_name TEXT NOT NULL,
+  base_url TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, source_name)
+);
 CREATE INDEX IF NOT EXISTS idx_limits_plan ON quota_limits(plan_id);
 CREATE INDEX IF NOT EXISTS idx_usage_user ON quota_usage_logs(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_logs_created ON api_call_logs(created_at);

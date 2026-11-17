@@ -3,6 +3,7 @@
 import type {
   ApiKeyStore,
   DbQuota,
+  DbSourceConfigs,
   CallLogStore,
   DataSourceStore,
   PlanStore,
@@ -22,6 +23,7 @@ export type ApiStores = {
   dataSources?: DataSourceStore & { listAll?(): unknown[]; create?(...args: never[]): unknown }
   callLogs?: CallLogStore
   quota?: DbQuota
+  sourceConfigs?: DbSourceConfigs
 }
 
 /** 未接的后端域：回 501 + 一句人能照着做的话（面板会把 msg 原样 toast 出来） */

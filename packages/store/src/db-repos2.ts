@@ -259,6 +259,20 @@ export class DbCallLogs implements CallLogStore {
       since,
     )
   }
+
+  /** 按天 × 源的调用趋势（面板趋势图；读的是明细，聚合表没有时间维度） */
+  trend(days: number): Array<{ day: string; source: string; total: number; success: number; failed: number }> {
+    const since = new Date(Date.now() - Math.max(1, days) * 86_400_000).toISOString()
+    return this.db.all<{ day: string; source: string; total: number; success: number; failed: number }>(
+      `SELECT substr(created_at, 1, 10) AS day, source,
+              COUNT(*) AS total,
+              SUM(CASE WHEN status < 400 AND in_band_error = 0 THEN 1 ELSE 0 END) AS success,
+              SUM(CASE WHEN status >= 400 OR in_band_error = 1 THEN 1 ELSE 0 END) AS failed
+         FROM api_call_logs WHERE created_at >= ?
+        GROUP BY day, source ORDER BY day, source`,
+      since,
+    )
+  }
 }
 
 function toRow(r: Record<string, SqlValue>): CallLogRow {

@@ -6,9 +6,11 @@ import { fail, ok } from '@loomproxy/contract'
 import { clampPage, clampPageSize } from '@loomproxy/kernel'
 import type { Config } from '@loomproxy/kernel'
 import { resolveIdentity } from './auth.ts'
+import type { DataSourceStore } from '@loomproxy/store'
+import type { SourceHost } from '@loomproxy/source-host'
 import { notWired, type ApiStores } from './stores.ts'
 
-type Deps = { config: Config; stores: ApiStores }
+type Deps = { config: Config; stores: ApiStores; dataSources?: DataSourceStore; host?: SourceHost }
 
 async function requireAdmin(req: FastifyRequest, reply: FastifyReply, deps: Deps) {
   const id = await resolveIdentity(req, deps.config, {
@@ -20,6 +22,17 @@ async function requireAdmin(req: FastifyRequest, reply: FastifyReply, deps: Deps
     return undefined
   }
   return id
+}
+
+/** 下次清零时刻（平台时区下一个 0 点），形状与 Go 的 nextResetTime 一致：2026/11/18 00:00:00 */
+function nextResetLabel(tzOffsetHours: number): string {
+  const offsetMs = tzOffsetHours * 3600_000
+  const local = Date.now() + offsetMs
+  const next = (Math.floor(local / 86_400_000) + 1) * 86_400_000 - offsetMs
+  // next 是 UTC 时刻；要显示的是**平台时区**的钟点，所以把位移加回去再读 UTC 分量
+  const d = new Date(next + offsetMs)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getUTCFullYear()}/${d.getUTCMonth() + 1}/${d.getUTCDate()} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:00`
 }
 
 export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
@@ -423,8 +436,34 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
     ds?.remove?.(Number(id))
     return ok({})
   })
-  // 平台/用户的数据源默认地址、分组、定时、榜单可见：未接
-  for (const path of ['/admin/source-configs', '/admin/source-groups', '/admin/source-groups/:id', '/admin/source-schedules', '/admin/source-schedules/:id', '/admin/source-groups/:id/members', '/admin/source-groups/:id/apply-limits']) {
+  // 平台默认地址（个人级在 /user/source-configs）：回落顺序 个人 → 平台 → 源内置
+  app.get('/admin/source-configs', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const cfg = stores.sourceConfigs
+    if (!cfg) return unavailable(reply, '数据源默认地址存储未接')
+    const map = cfg.platform()
+    const dsStore = deps.dataSources as unknown as { listAll?: () => Array<{ name: string; display_name: string }> }
+    const items = (dsStore?.listAll?.() ?? []).map((ds) => ({
+      source_name: ds.name,
+      source_display: ds.display_name,
+      base_url: map[ds.name] ?? '',
+    }))
+    return ok(items)
+  })
+  app.put('/admin/source-configs', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const cfg = stores.sourceConfigs
+    if (!cfg) return unavailable(reply, '数据源默认地址存储未接')
+    const b = (req.body ?? {}) as { configs?: Array<{ source_name?: string; base_url?: string }> }
+    for (const c of b.configs ?? []) {
+      if (!c.source_name) continue
+      cfg.setPlatform(c.source_name, (c.base_url ?? '').trim())
+    }
+    return ok({})
+  })
+
+  // 分组 / 定时 / 榜单可见：未接
+  for (const path of ['/admin/source-groups', '/admin/source-groups/:id', '/admin/source-schedules', '/admin/source-schedules/:id', '/admin/source-groups/:id/members', '/admin/source-groups/:id/apply-limits']) {
     app.get(path, async (_req, reply) => unavailable(reply, '数据源默认地址/分组/定时'))
     app.put(path, async (_req, reply) => unavailable(reply, '数据源默认地址/分组/定时'))
     app.post(path, async (_req, reply) => unavailable(reply, '数据源默认地址/分组/定时'))
@@ -480,7 +519,13 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
     return '<!doctype html><meta charset="utf-8"><title>监控报表</title><p>本 TS 部署暂未迁移服务端渲染报表，读数见「监控」页。</p>'
   })
 
-  app.get('/admin/monitor/trend', async (_req, reply) => unavailable(reply, '调用趋势（按天聚合）'))
+  app.get('/admin/monitor/trend', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const qs = req.query as Record<string, string>
+    const days = Math.max(1, Number(qs['days'] ?? 7) || 7)
+    const logs = stores.callLogs as unknown as { trend?: (d: number) => unknown[] }
+    return ok(logs?.trend?.(days) ?? [])
+  })
   app.post('/admin/monitor/backfill-subjects', async (_req, reply) => unavailable(reply, '名称回填（需命名缓存）'))
 
   // ---- 号池：本轮没有池运行时（③ §9），空列表而不是假数据 ----
@@ -529,7 +574,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
     return ok({})
   })
 
-  // ---- 我的额度（面板概览页） ----
+  // ---- 我的额度（面板概览页）：形状照 Go 的 DashboardResponse 抄 ----
   app.get('/quota/dashboard', async (req, reply) => {
     const id = await resolveIdentity(req, config, deps.stores ?? {})
     if (id.userId === undefined) {
@@ -542,15 +587,69 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
       return
     }
     const q = stores.quota
+    const isAdmin = id.roles.includes('admin')
     const since = q?.startOfWindow(user.id, config.tzOffsetHours) ?? new Date().toISOString()
-    const limits = (q?.limitsOfPlan(user.plan_id ?? 0) ?? []).filter((l) => l.scope === 'source')
-    const rows = limits.map((l) => {
-      const used = q?.usedSince(user.id, l.target, since) ?? 0
-      const override = q?.overridesOf(user.id).find((o) => o.target === l.target)
-      const limit = override ? override.limit : l.limit
-      return { source: l.target, limit, used, remaining: Math.max(0, limit - used) }
+    const dayStart = q?.startOfWindow(0, config.tzOffsetHours) ?? since
+
+    const rows = (deps.dataSources?.listEnabled() ?? []).filter((ds) => {
+      if (isAdmin) return true
+      // 非管理员只看见"套餐里有这一行"的源（限额即授权）
+      return q ? q.effectiveLimit(user.id, user.plan_id, ds.name) !== -1 : false
     })
-    return ok({ user: { id: user.id, username: user.username, plan: user.plan }, since, rows })
+
+    const sources = rows.map((ds) => {
+      const granted = q?.limitsOfPlan(user.plan_id ?? 0).find((l) => l.scope === 'source' && l.target === ds.name)
+      const override = q?.overridesOf(user.id).find((o) => o.scope === 'source' && o.target === ds.name)
+      const effective = isAdmin ? -1 : q?.effectiveLimit(user.id, user.plan_id, ds.name) ?? -1
+      const used = isAdmin ? q?.usedTodayAll(ds.name, since) ?? 0 : q?.usedSince(user.id, ds.name, since) ?? 0
+      const remaining = effective >= 0 ? Math.max(0, effective - used) : -1
+      const usagePct = effective > 0 ? Math.min(100, Math.floor((used * 100) / effective)) : 0
+      const entry = deps.host?.registryRef.get(ds.name)
+      const actions = entry?.meta.actions ?? []
+      return {
+        id: ds.id ?? 0,
+        source_code: ds.name,
+        name: ds.display_name,
+        // 分组视图还没接（表都没有），一律未分组
+        group_id: 0,
+        group_name: '',
+        override: override ? (override.limit > 0 ? `+${override.limit}` : String(override.limit)) : '未设置',
+        used_today: used,
+        active_users: isAdmin ? q?.activeUsersForSource(ds.name, since) ?? 0 : 0,
+        effective_total: effective,
+        remaining,
+        usage_pct: usagePct,
+        next_reset: nextResetLabel(config.tzOffsetHours),
+        handlers: actions,
+        interfaces: actions.map((a) => {
+          const c = q?.costOf(ds.name, a)
+          return {
+            id: c?.id ?? 0,
+            name: a,
+            cost: c?.cost ?? 0,
+            interval: c?.interval ?? 0,
+            limit_count: c?.limit_count ?? 0,
+            window_sec: c?.window_sec ?? 60,
+            enabled: (c?.status ?? 1) === 1,
+          }
+        }),
+        ...(granted ? { plan_limit: granted.limit } : {}),
+      }
+    })
+
+    return ok({
+      sources,
+      groups: [],
+      ungrouped_count: sources.length,
+      is_admin: isAdmin,
+      plan_name: user.plan?.name ?? '',
+      plan_code: user.plan?.code ?? '',
+      plan_expire_at: null,
+      active_users: isAdmin ? q?.activeUsersAll(since) ?? 0 : 0,
+      call_count: isAdmin ? q?.callCountSince(dayStart) ?? 0 : 0,
+      quota_cycle_mode: 'day',
+      switch_allowed_at: null,
+    })
   })
 
   app.get('/quota/usage-logs', async (req, reply) => {
@@ -568,6 +667,53 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
         ...(qs['group'] ? { groupCode: qs['group'] } : {}),
       }) ?? { total: 0, page: 1, page_size: 20, list: [] },
     )
+  })
+
+  // ---- 个人数据源地址 ----
+  app.get('/user/source-configs', async (req, reply) => {
+    const id = await resolveIdentity(req, config, deps.stores ?? {})
+    if (id.userId === undefined) {
+      reply.code(401).send(fail(401, '请先登录'))
+      return
+    }
+    const cfg = stores.sourceConfigs
+    if (!cfg) return unavailable(reply, '数据源默认地址存储未接')
+    const user = stores.users?.byId(id.userId)
+    const isAdmin = id.roles.includes('admin')
+    const mine = cfg.user(id.userId)
+    const items = (deps.dataSources?.listEnabled() ?? [])
+      .filter((ds) => isAdmin || (stores.quota ? stores.quota.effectiveLimit(id.userId!, user?.plan_id ?? null, ds.name) !== -1 : false))
+      .map((ds) => ({ source_name: ds.name, source_display: ds.display_name, base_url: mine[ds.name] ?? '' }))
+    return ok(items)
+  })
+  app.put('/user/source-configs', async (req, reply) => {
+    const id = await resolveIdentity(req, config, deps.stores ?? {})
+    if (id.userId === undefined) {
+      reply.code(401).send(fail(401, '请先登录'))
+      return
+    }
+    const cfg = stores.sourceConfigs
+    if (!cfg) return unavailable(reply, '数据源默认地址存储未接')
+    const b = (req.body ?? {}) as { configs?: Array<{ source_name?: string; base_url?: string }> }
+    for (const c of b.configs ?? []) {
+      if (!c.source_name) continue
+      cfg.setUser(id.userId, c.source_name, (c.base_url ?? '').trim())
+    }
+    return ok({})
+  })
+
+  // 导入入口：书源文件是否托管就位（就位才在面板显示提示；rc 路径与 Go 版同形）
+  app.get('/user/import-config', async (req, reply) => {
+    const id = await resolveIdentity(req, config, deps.stores ?? {})
+    if (id.userId === undefined) {
+      reply.code(401).send(fail(401, '请先登录'))
+      return
+    }
+    const { existsSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const rel = '/data/shuyuan/bookSource.json'
+    const ready = existsSync(join(config.dataDir, 'shuyuan', 'bookSource.json'))
+    return ok({ book_source_path: rel, ready })
   })
 
   // ---- 明确未接的域（面板有页、后端没有） ----
@@ -589,9 +735,6 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
     ['GET', '/quota/transfers', '额度转移'],
     ['POST', '/quota/transfer', '额度转移'],
     ['DELETE', '/quota/transfers', '额度转移'],
-    ['GET', '/user/source-configs', '用户数据源配置'],
-    ['PUT', '/user/source-configs', '用户数据源配置'],
-    ['GET', '/user/import-config', '导入配置'],
     ['POST', '/user/redeem', '卡密兑换'],
   ]
   for (const [method, path, what] of stubs) {
