@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2023"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": false,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@loomproxy/contract": ["packages/contract/src/index.ts"],
+      "@loomproxy/kernel": ["packages/kernel/src/index.ts"],
+      "@loomproxy/store": ["packages/store/src/index.ts"],
+      "@loomproxy/source-kit": ["packages/source-kit/src/index.ts"],
+      "@loomproxy/gate": ["packages/gate/src/index.ts"],
+      "@loomproxy/source-host": ["packages/source-host/src/index.ts"],
+      "@loomproxy/api": ["packages/api/src/index.ts"]
+    }
+  },
+  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "packages/plugins/*/src/**/*.ts",
+              "apps/*/src/**/*.ts", "apps/*/test/**/*.ts", "tools/**/*.mjs"]
+}

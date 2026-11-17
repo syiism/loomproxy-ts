@@ -1,0 +1,2 @@
+# 插件目录（部署单元的一部分）：plugins/<code>/<version>/{manifest.json, package.json, index.js}
+# 本轮不携带任何源包实现（AGENTS §1.5）；起服务时该目录为空即可，/datasources 会返回空列表。

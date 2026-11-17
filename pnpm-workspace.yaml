@@ -1,0 +1,9 @@
+packages:
+  - "packages/contract"
+  - "packages/kernel"
+  - "packages/store"
+  - "packages/source-kit"
+  - "packages/gate"
+  - "packages/source-host"
+  - "packages/api"
+  - "apps/*"

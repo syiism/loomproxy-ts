@@ -1,0 +1,14 @@
+{
+  "name": "@loomproxy/server",
+  "version": "0.0.0",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@loomproxy/api": "workspace:*",
+    "@loomproxy/contract": "workspace:*",
+    "@loomproxy/kernel": "workspace:*",
+    "@loomproxy/source-host": "workspace:*",
+    "@loomproxy/source-kit": "workspace:*",
+    "@loomproxy/store": "workspace:*"
+  }
+}

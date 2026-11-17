@@ -1,0 +1,15 @@
+{
+  "name": "@loomproxy/api",
+  "version": "0.0.0",
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@loomproxy/contract": "workspace:*",
+    "@loomproxy/gate": "workspace:*",
+    "@loomproxy/kernel": "workspace:*",
+    "@loomproxy/source-host": "workspace:*",
+    "@loomproxy/source-kit": "workspace:*",
+    "@loomproxy/store": "workspace:*",
+    "fastify": "^5.0.0"
+  }
+}

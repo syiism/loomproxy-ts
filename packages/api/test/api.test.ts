@@ -1,0 +1,242 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { loadConfig, silentLogger, Upstream } from '@loomproxy/kernel'
+import { SourceRegistry } from '@loomproxy/source-kit'
+import { InMemoryDataSources, InMemorySettings } from '@loomproxy/store'
+import { SourceHost } from '@loomproxy/source-host'
+import { buildServer, signToken } from '../src/index.ts'
+import { RateLimiter } from '@loomproxy/gate'
+
+const SECRET = 'test-secret-0123456789abcdef0123456789'
+
+function makePluginDir(): string {
+  const root = mkdtempSync(join(tmpdir(), 'loomproxy-api-'))
+  const v = join(root, 'plugins', 'demo_one', '1.0.0')
+  mkdirSync(v, { recursive: true })
+  writeFileSync(
+    join(v, 'manifest.json'),
+    JSON.stringify({
+      sdk_version: '^1',
+      entry: './index.mjs',
+      params: { search: ['key'], content: ['bookId', 'itemId'] },
+      meta: {
+        code: 'demo_one',
+        display: '演示一号',
+        category: 'demo',
+        sort_order: 1,
+        status: 1,
+        actions: ['search', 'content'],
+        required_params: { content: ['itemId'] },
+        media_type: 'novel',
+        search_tabs: [{ tab_type: 3, bd_id: '2', name: '小说', media_type: 'novel' }],
+      },
+    }),
+  )
+  writeFileSync(
+    join(v, 'index.mjs'),
+    `export default { handlers: {
+       search: async (ctx) => ({ bookList: [{ bookId: 'b1', name: 'n-' + (ctx.params.key ?? ''), author: 'a',
+         kind: 'stale,小说', wordCount: '', lastChapter: '', intro: '', coverUrl: '' }] }),
+       content: async () => ({ contentType: 'novel', data: { content: '正文' } }),
+     } }`,
+  )
+  return root
+}
+
+async function makeApp() {
+  const root = makePluginDir()
+  const config = loadConfig({ JWT_SECRET: SECRET, DATA_DIR: join(root, 'data'), PLUGIN_DIR: join(root, 'plugins') })
+  const logger = silentLogger()
+  const registry = new SourceRegistry()
+  const settings = new InMemorySettings()
+  const dataSources = new InMemoryDataSources()
+  const upstream = new Upstream({ config, logger })
+  const host = new SourceHost({
+    pluginDir: config.pluginDir,
+    logger,
+    registry,
+    settings,
+    dataSources,
+    upstream,
+    drainTimeoutMs: 500,
+  })
+  await host.scanSync()
+  // 每个请求把时钟推进 5s：本用例要验的是派发形状，不是限流
+  let tick = 0
+  const limiter = new RateLimiter(() => 1_000_000 + tick++ * 5_000)
+  const app = buildServer({ config, logger, upstream, host, dataSources, settings, limiter })
+  return { app, root, config, host }
+}
+
+const adminToken = () => signToken({ user_id: 1, username: 'admin', roles: ['admin'] }, SECRET)
+const userToken = () => signToken({ user_id: 2, username: 'u' }, SECRET)
+
+test('存活探针是裸对象（不是信封）', async () => {
+  const { app, root } = await makeApp()
+  try {
+    const res = await app.inject({ method: 'GET', url: '/' })
+    assert.equal(res.statusCode, 200)
+    assert.deepEqual(res.json(), { app: 'LoomProxy', status: 'ok', panel: '/panel' })
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('/datasources：只列已加载且启用的源，形状与 Go 版一致', async () => {
+  const { app, root } = await makeApp()
+  try {
+    const res = await app.inject({ method: 'GET', url: '/datasources' })
+    assert.equal(res.statusCode, 200)
+    const body = res.json() as { code: number; msg: string; data: Array<Record<string, unknown>> }
+    assert.equal(body.code, 0)
+    assert.equal(body.msg, 'ok')
+    assert.equal(body.data.length, 1)
+    const item = body.data[0]!
+    assert.equal(item['id'], 'demo_one')
+    assert.equal(item['name'], '演示一号')
+    assert.equal(item['media_type'], 'novel')
+    assert.deepEqual(item['search_tab'], [{ tab_type: 3, bd_id: '2', name: '小说', media_type: 'novel' }])
+    assert.deepEqual(item['files'], [])
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('数据面是裸对象：search 打标 source/kind，content 原样返回', async () => {
+  const { app, root } = await makeApp()
+  try {
+    const search = await app.inject({ method: 'GET', url: '/demo_one/search?key=三体' })
+    assert.equal(search.statusCode, 200)
+    const sBody = search.json() as { bookList: Array<{ source: string; kind: string; name: string }>; code?: number }
+    assert.equal(sBody.code, undefined, '数据面不许出现 code/msg 信封')
+    assert.equal(sBody.bookList[0]!.name, 'n-三体', '只注入声明过的 query')
+    assert.equal(sBody.bookList[0]!.source, 'demo_one')
+    assert.equal(sBody.bookList[0]!.kind, 'demo_one,stale,小说')
+
+    // 未声明的 query 不注入
+    const extra = await app.inject({ method: 'GET', url: '/demo_one/search?key=三体&baseUrl=http://evil' })
+    assert.equal((extra.json() as { bookList: Array<{ name: string }> }).bookList[0]!.name, 'n-三体')
+
+    const content = await app.inject({ method: 'GET', url: '/demo_one/content?bookId=b1&itemId=c1' })
+    assert.equal(content.statusCode, 200)
+    assert.deepEqual(content.json(), { contentType: 'novel', data: { content: '正文' } })
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('必填参数缺失 → 400 信封（不许落到源的带内错误）', async () => {
+  const { app, root } = await makeApp()
+  try {
+    const res = await app.inject({ method: 'GET', url: '/demo_one/content?bookId=b1' })
+    assert.equal(res.statusCode, 400)
+    const body = res.json() as { code: number; msg: string }
+    assert.equal(body.code, -1, 'code 取 ERROR_CODE，不是 HTTP 码')
+    assert.match(body.msg, /itemId/)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('未知源 404；未登录访问受保护的控制面 401', async () => {
+  const { app, root } = await makeApp()
+  try {
+    const nf = await app.inject({ method: 'GET', url: '/nope/search?key=x' })
+    assert.equal(nf.statusCode, 404)
+    assert.deepEqual(nf.json(), { code: 404, msg: 'not found' })
+
+    const ep = await app.inject({ method: 'GET', url: '/endpoints' })
+    assert.equal(ep.statusCode, 401)
+    assert.match((ep.json() as { msg: string }).msg, /登录归属/)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('插件管理：要管理员；reload 生效且 /datasources 跟着变；rollback 可回退', async () => {
+  const { app, root, host } = await makeApp()
+  try {
+    const forbidden = await app.inject({ method: 'GET', url: '/admin/sources/plugins', headers: { authorization: `Bearer ${userToken()}` } })
+    assert.equal(forbidden.statusCode, 403)
+
+    const okRes = await app.inject({
+      method: 'GET',
+      url: '/admin/sources/plugins',
+      headers: { authorization: `Bearer ${adminToken()}` },
+    })
+    assert.equal(okRes.statusCode, 200)
+    const list = (okRes.json() as { data: Array<{ code: string; state: string; version: string }> }).data
+    assert.equal(list[0]?.code, 'demo_one')
+    assert.equal(list[0]?.state, 'active')
+
+    // 加一个高版本，reload 后 /datasources 立即反映（不用重启）
+    const v = join(root, 'plugins', 'demo_one', '1.1.0')
+    mkdirSync(v, { recursive: true })
+    writeFileSync(
+      join(v, 'manifest.json'),
+      JSON.stringify({
+        sdk_version: '^1',
+        entry: './index.mjs',
+        meta: {
+          code: 'demo_one',
+          display: '演示一号 v2',
+          category: 'demo',
+          sort_order: 1,
+          status: 1,
+          actions: ['search'],
+        },
+      }),
+    )
+    writeFileSync(join(v, 'index.mjs'), `export default { handlers: { search: async () => ({ bookList: [] }) } }`)
+
+    const reload = await app.inject({
+      method: 'POST',
+      url: '/admin/sources/demo_one/reload',
+      headers: { authorization: `Bearer ${adminToken()}` },
+    })
+    assert.equal(reload.statusCode, 200)
+    assert.equal((reload.json() as { data: { version: string } }).data.version, '1.1.0')
+
+    const ds = await app.inject({ method: 'GET', url: '/datasources' })
+    const item = (ds.json() as { data: Array<{ name: string }> }).data[0]
+    assert.equal(item?.name, '演示一号 v2', '清单必须跟着换代')
+
+    // rollback 回 1.0.0
+    const rb = await app.inject({
+      method: 'POST',
+      url: '/admin/sources/demo_one/rollback',
+      headers: { authorization: `Bearer ${adminToken()}` },
+    })
+    assert.equal(rb.statusCode, 200)
+    assert.equal((rb.json() as { data: { version: string } }).data.version, '1.0.0')
+    assert.equal(host.registryRef.get('demo_one')?.version, '1.0.0')
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('静态字典：缺文件 404 且不列清单', async () => {
+  const { app, root } = await makeApp()
+  try {
+    const miss = await app.inject({ method: 'GET', url: '/data/demo_one/nope' })
+    assert.equal(miss.statusCode, 404)
+    assert.deepEqual(miss.json(), { error: 'not found' })
+
+    const index = await app.inject({ method: 'GET', url: '/data' })
+    assert.equal(index.statusCode, 200)
+    const body = index.json() as { data: { count: number; sources: Record<string, unknown> } }
+    assert.equal(body.data.count, 0)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})

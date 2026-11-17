@@ -1,0 +1,5 @@
+{
+  "sdk_version": "^1",
+  "entry": "./index.mjs",
+  "meta": { "code": "bad_manifest", "display": "缺字段", "category": "fixture" }
+}

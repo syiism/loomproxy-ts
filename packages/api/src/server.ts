@@ -1,0 +1,62 @@
+// HTTP 装配：静态路由优先，剩下 /:source/:action 走查表派发（迁移-TS-4 §5）。
+import Fastify, { type FastifyInstance } from 'fastify'
+import type { Config, Logger, Upstream } from '@loomproxy/kernel'
+import type { DataSourceStore, SettingsStore } from '@loomproxy/store'
+import type { SourceHost } from '@loomproxy/source-host'
+import { Ledger, RateLimiter } from '@loomproxy/gate'
+import { createDispatcher } from './dispatch.ts'
+import { registerControlRoutes } from './routes.ts'
+
+export type ApiDeps = {
+  config: Config
+  logger: Logger
+  upstream: Upstream
+  host: SourceHost
+  dataSources: DataSourceStore
+  settings: SettingsStore
+  ledger?: Ledger
+  limiter?: RateLimiter
+}
+
+export function buildServer(deps: ApiDeps): FastifyInstance {
+  const app = Fastify({
+    logger: false,
+    trustProxy: true,
+    routerOptions: {
+      // 面板与下游都用 query 传参：值**永远是字符串**，不许被解释成 bool/数字
+      // （Go 版 param-assert-check 钉的同一条：数字断言 = 静默死代码）
+      querystringParser: (str: string) =>
+        Object.fromEntries(new URLSearchParams(str).entries()) as Record<string, string>,
+    },
+  })
+
+  app.addHook('onRequest', async (req, reply) => {
+    reply.header('x-request-id', req.id)
+  })
+
+  registerControlRoutes(app, {
+    config: deps.config,
+    host: deps.host,
+    dataSources: deps.dataSources,
+  })
+
+  const dispatch = createDispatcher({
+    config: deps.config,
+    logger: deps.logger,
+    upstream: deps.upstream,
+    host: deps.host,
+    dataSources: deps.dataSources,
+    settings: deps.settings,
+    ledger: deps.ledger ?? new Ledger(),
+    limiter: deps.limiter ?? new RateLimiter(),
+  })
+
+  // catch-all：新插件加载完立刻可用，不需要 removeRoute/addRoute
+  app.get('/:source/:action', dispatch)
+
+  app.setNotFoundHandler((_req, reply) => {
+    reply.code(404).send({ code: 404, msg: 'not found' })
+  })
+
+  return app
+}

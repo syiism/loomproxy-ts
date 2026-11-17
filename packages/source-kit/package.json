@@ -1,0 +1,13 @@
+{
+  "name": "@loomproxy/source-kit",
+  "version": "0.0.0",
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@loomproxy/contract": "workspace:*",
+    "@loomproxy/kernel": "workspace:*"
+  },
+  "peerDependencies": {
+    "@loomproxy/kernel": "^0.0.0"
+  }
+}
