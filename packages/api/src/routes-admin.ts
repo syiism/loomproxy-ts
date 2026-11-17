@@ -505,8 +505,17 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
   // ---- 数据源 ----
   app.get('/admin/data-sources', async (req, reply) => {
     if (!(await guard(req, reply))) return
-    const ds = stores.dataSources as unknown as { listAll?: () => unknown[] }
-    return ok(ds?.listAll?.() ?? [])
+    const ds = stores.dataSources as unknown as { listAll?: () => Array<Record<string, unknown>> }
+    // 面板读 ds.rank_public（榜单开关的当前态）与 group_id/group_name（分组列）
+    const rank = rankPublicSet(stores.settings)
+    const groups = stores.sourceGroups?.list() ?? []
+    return ok(
+      (ds?.listAll?.() ?? []).map((row) => ({
+        ...row,
+        rank_public: rank.has(String(row['name'])),
+        group_name: groups.find((g) => g.id === Number(row['group_id'] ?? 0))?.name ?? '',
+      })),
+    )
   })
   app.post('/admin/data-sources', async (req, reply) => {
     if (!(await guard(req, reply))) return
@@ -630,7 +639,10 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
   // ---- 数据源分组（视图 + 批量授权单位，不参与键控） ----
   app.get('/admin/source-groups', async (req, reply) => {
     if (!(await guard(req, reply))) return
-    return ok(stores.sourceGroups?.list() ?? [])
+    // 面板读 res.groups / res.ungrouped_count（不是裸数组）；形状照 Go 的 ListSourceGroups
+    const groups = stores.sourceGroups
+    if (!groups) return unavailable(reply, '分组存储未接')
+    return ok({ groups: groups.list(), ungrouped_count: groups.ungroupedCount() })
   })
   app.post('/admin/source-groups', async (req, reply) => {
     if (!(await guard(req, reply))) return
@@ -641,12 +653,19 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
     }
     const groups = stores.sourceGroups
     if (!groups) return unavailable(reply, '分组存储未接')
-    return ok(groups.create({ name: b.name, ...(b.sort_order !== undefined ? { sort_order: b.sort_order } : {}) }))
+    const b2 = b as { name?: string; description?: string; sort_order?: number }
+    return ok(
+      groups.create({
+        name: b2.name as string,
+        ...(b2.description !== undefined ? { description: b2.description } : {}),
+        ...(b2.sort_order !== undefined ? { sort_order: b2.sort_order } : {}),
+      }),
+    )
   })
   app.patch('/admin/source-groups/:id', async (req, reply) => {
     if (!(await guard(req, reply))) return
     const { id } = req.params as { id: string }
-    const b = (req.body ?? {}) as { name?: string; sort_order?: number; status?: number }
+    const b = (req.body ?? {}) as { name?: string; description?: string; sort_order?: number; status?: number }
     return ok(stores.sourceGroups?.update(Number(id), b) ?? {})
   })
   app.delete('/admin/source-groups/:id', async (req, reply) => {

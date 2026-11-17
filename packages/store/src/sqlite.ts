@@ -204,6 +204,7 @@ CREATE TABLE IF NOT EXISTS redeem_codes (
 CREATE TABLE IF NOT EXISTS source_groups (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
   sort_order INTEGER NOT NULL DEFAULT 0,
   status INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
@@ -295,6 +296,14 @@ export class SqliteDb {
 
   migrate(): void {
     this.raw.exec(SCHEMA)
+    // 老库补列：CREATE TABLE IF NOT EXISTS 不会给已存在的表加字段，而发版时不能要求重建库
+    this.ensureColumn('source_groups', 'description', "TEXT NOT NULL DEFAULT ''")
+  }
+
+  private ensureColumn(table: string, column: string, decl: string): void {
+    const cols = this.raw.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
+    if (cols.some((c) => c.name === column)) return
+    this.raw.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`)
   }
 
   private stmt(sql: string): StatementSync {

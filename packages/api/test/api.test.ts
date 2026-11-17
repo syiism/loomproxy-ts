@@ -681,3 +681,45 @@ test('套餐授权：批量授权回 created/skipped、限额 -1 视为「已授
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('分组：列表回 {groups, ungrouped_count}（面板读 res.groups）+ 源行带 group_name/rank_public', async () => {
+  const { app, root, settings, dataSources } = await makeApp()
+  try {
+    const H = { authorization: `Bearer ${adminToken()}` }
+    // 空态也要是对象（裸数组会让面板 sourceGroups 恒空 → 分组不显示）
+    const empty = await app.inject({ method: 'GET', url: '/admin/source-groups', headers: H })
+    const emptyData = (empty.json() as { data: { groups: unknown[]; ungrouped_count: number } }).data
+    assert.ok(Array.isArray(emptyData.groups))
+    assert.equal(emptyData.ungrouped_count, 1)
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/admin/source-groups',
+      headers: H,
+      payload: { name: '网文', description: '入选的网文', sort_order: 2, status: 1 },
+    })
+    assert.equal(created.statusCode, 200)
+    const gid = (created.json() as { data: { id: number; description: string } }).data.id
+    assert.equal((created.json() as { data: { description: string } }).data.description, '入选的网文')
+
+    // 成员 + 源行字段
+    const moved = await app.inject({ method: 'PUT', url: `/admin/source-groups/${gid}/members`, headers: H, payload: { source_names: ['demo_one'] } })
+    assert.equal((moved.json() as { data: { moved: number } }).data.moved, 1)
+    settings.set('rank_public_sources', 'demo_one')
+    const dsList = await app.inject({ method: 'GET', url: '/admin/data-sources', headers: H })
+    const row = (dsList.json() as { data: Array<{ name: string; group_id: number; group_name: string; rank_public: boolean }> }).data.find((d) => d.name === 'demo_one')!
+    assert.equal(row.group_id, gid)
+    assert.equal(row.group_name, '网文')
+    assert.equal(row.rank_public, true, '榜单开关的当前态（面板靠它渲染 可见/隐藏）')
+
+    const after = (await app.inject({ method: 'GET', url: '/admin/source-groups', headers: H })).json() as {
+      data: { groups: Array<{ id: number; member_count: number }>; ungrouped_count: number }
+    }
+    assert.equal(after.data.groups.find((g) => g.id === gid)?.member_count, 1)
+    assert.equal(after.data.ungrouped_count, 0)
+    void dataSources
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
