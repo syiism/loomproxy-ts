@@ -149,11 +149,16 @@ export class DbDataSources implements DataSourceStore {
     ).lastInsertRowid
   }
 
-  update(id: number, patch: { display_name?: string; category?: string; description?: string; sort_order?: number; status?: number }): void {
+  /** 只认这五个列：面板可能顺手传 rank_public/name 之类，直接拼进 SQL 会变成 500 */
+  update(
+    id: number,
+    patch: { display_name?: string; category?: string; description?: string; sort_order?: number; status?: number; group_id?: number | null },
+  ): void {
+    const ALLOWED = new Set(['display_name', 'category', 'description', 'sort_order', 'status', 'group_id'])
     const sets: string[] = []
     const params: SqlValue[] = []
     for (const [k, v] of Object.entries(patch)) {
-      if (v === undefined) continue
+      if (v === undefined || !ALLOWED.has(k)) continue
       sets.push(`${k} = ?`)
       params.push(v as SqlValue)
     }

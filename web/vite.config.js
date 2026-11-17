@@ -10,7 +10,7 @@ const apiProxy = ['/auth', '/admin', '/quota',
 }, {})
 
 export default defineConfig({
-  base: '/panel/',
+  base: '/',
   plugins: [vue()],
   server: {
     proxy: apiProxy,

@@ -119,12 +119,12 @@ async function makeApp() {
 const adminToken = () => signToken({ user_id: 1, username: 'admin', roles: ['admin'] }, SECRET)
 const userToken = () => signToken({ user_id: 2, username: 'u' }, SECRET)
 
-test('存活探针是裸对象（不是信封）', async () => {
+test('健康检查是裸对象（不是信封），挂在 /health；/ 归面板', async () => {
   const { app, root } = await makeApp()
   try {
-    const res = await app.inject({ method: 'GET', url: '/' })
+    const res = await app.inject({ method: 'GET', url: '/health' })
     assert.equal(res.statusCode, 200)
-    assert.deepEqual(res.json(), { app: 'LoomProxy', status: 'ok', panel: '/panel' })
+    assert.deepEqual(res.json(), { app: 'LoomProxy', status: 'ok' })
   } finally {
     await app.close()
     rmSync(root, { recursive: true, force: true })
@@ -583,6 +583,62 @@ test('/admin/settings 形状：items + sensitive_keys（面板读 resp.items，�
     assert.ok(Array.isArray(data.data.sensitive_keys))
     const hit = (data.data.items as Array<{ key: string; value: string }>).find((i) => i.key === 'announcement')
     assert.equal(hit?.value, 'hello')
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('数据源 PATCH/DELETE：404/无字段/非法分组/rank_public 走设置名单/被套餐引用不许删', async () => {
+  const { app, root, settings, quota, plans, dataSources } = await makeApp()
+  try {
+    const H = { authorization: `Bearer ${adminToken()}` }
+    // 造一行源（插件 upsert 的等价物）
+    const id = dataSources.create({ name: 'demo_3', display_name: '三号', category: 'demo', sort_order: 3 })
+
+    assert.equal((await app.inject({ method: 'PATCH', url: '/admin/data-sources/9999', headers: H, payload: { display_name: 'x' } })).statusCode, 404)
+    assert.equal((await app.inject({ method: 'PATCH', url: `/admin/data-sources/${id}`, headers: H, payload: {} })).statusCode, 400)
+    assert.equal(
+      (await app.inject({ method: 'PATCH', url: `/admin/data-sources/${id}`, headers: H, payload: { group_id: 1, clear_group: true } })).statusCode,
+      400,
+    )
+    assert.equal(
+      (await app.inject({ method: 'PATCH', url: `/admin/data-sources/${id}`, headers: H, payload: { group_id: 999 } })).statusCode,
+      400,
+      '分组不存在',
+    )
+
+    // 正常改 + rank_public（存设置名单，不是列）
+    const patched = await app.inject({
+      method: 'PATCH',
+      url: `/admin/data-sources/${id}`,
+      headers: H,
+      payload: { display_name: '三号改', status: 0, rank_public: true },
+    })
+    assert.equal(patched.statusCode, 200)
+    const row = (patched.json() as { data: { display_name: string; status: number; rank_public: boolean } }).data
+    assert.equal(row.display_name, '三号改')
+    assert.equal(row.status, 0)
+    assert.equal(row.rank_public, true)
+    assert.equal(settings.get('rank_public_sources'), 'demo_3', '榜单可见性落在设置名单上')
+
+    // 关闭榜单
+    const off = await app.inject({ method: 'PATCH', url: `/admin/data-sources/${id}`, headers: H, payload: { rank_public: false } })
+    assert.equal((off.json() as { data: { rank_public: boolean } }).data.rank_public, false)
+    assert.equal(settings.get('rank_public_sources'), '')
+
+    // 被套餐引用 ⇒ 不许删（限额即授权）
+    quota.grant(plans.list()[0]!.id, 'source', 'demo_3', 10)
+    const blocked = await app.inject({ method: 'DELETE', url: `/admin/data-sources/${id}`, headers: H })
+    assert.equal(blocked.statusCode, 400)
+    assert.match((blocked.json() as { msg: string }).msg, /被套餐引用/)
+
+    // 解除引用后可删，且顺手摘榜单名单
+    settings.set('rank_public_sources', 'demo_3')
+    quota.removeLimit(quota.limitsOfPlan(plans.list()[0]!.id).find((l) => l.target === 'demo_3')!.id)
+    assert.equal((await app.inject({ method: 'DELETE', url: `/admin/data-sources/${id}`, headers: H })).statusCode, 200)
+    assert.equal(settings.get('rank_public_sources'), '')
+    assert.equal(dataSources.get('demo_3'), undefined)
   } finally {
     await app.close()
     rmSync(root, { recursive: true, force: true })

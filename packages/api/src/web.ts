@@ -1,4 +1,5 @@
-// 面板静态托管（与 Go 版同契约：`/panel` 与 `/panel/*` 都回 SPA，找不到文件回 index.html）。
+// 面板静态托管：挂在**根路径**（`/` 与 `/*`），找不到文件回 index.html。
+// `/panel` 已退役：只保留一个 301 到 `/`，让旧书签与文档里的老链接还能落地。
 // 不引 @fastify/static：本轮只需要"读文件 + SPA 回退"，多一个依赖不划算。
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
@@ -21,7 +22,10 @@ const MIME: Record<string, string> = {
 
 export type WebDeps = { webDir: string; logger: Logger }
 
-export function registerWebRoutes(app: FastifyInstance, deps: WebDeps): void {
+/** 面板入口：返回"读文件 + SPA 回退"的处理器（`/`、`/*`、`/assets/*` 与 dispatcher 的浏览器回退共用） */
+export type SpaHandler = (req: { url: string }, reply: FastifyReply) => Promise<void>
+
+export function registerWebRoutes(app: FastifyInstance, deps: WebDeps): SpaHandler {
   const root = resolve(deps.webDir)
   let warned = false
 
@@ -35,9 +39,9 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebDeps): void {
       .send({ code: -1, msg: '面板尚未构建：pnpm -F @loomproxy/web build（产物目录 WEB_DIST）' })
   }
 
-  const serve = async (req: { url: string }, reply: FastifyReply) => {
-    const path = req.url.split('?')[0] ?? '/panel'
-    const rel = decodeURIComponent(path.replace(/^\/panel\/?/, ''))
+  const serve: SpaHandler = async (req: { url: string }, reply: FastifyReply) => {
+    const path = req.url.split('?')[0] ?? '/'
+    const rel = decodeURIComponent(path.replace(/^\//, ''))
     if (rel !== '' && !rel.includes('..')) {
       const file = normalize(join(root, rel))
       if (file.startsWith(`${root}/`) && existsSync(file) && statSync(file).isFile()) {
@@ -55,7 +59,21 @@ export function registerWebRoutes(app: FastifyInstance, deps: WebDeps): void {
     reply.send(readFileSync(index))
   }
 
-  app.get('/panel', serve)
-  app.get('/panel/*', serve)
-  // 根路径上给个入口，便于人肉点开（Go 版 `/` 回 JSON，这里保持 JSON 且指向 /panel）
+  // /panel 退役：旧链接 301 到 `/#/<其余>`（面板用 hash 路由，服务端只认 / 与 /assets/*）
+  const legacy = async (req: { url: string }, reply: FastifyReply) => {
+    const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''
+    const rel = (req.url.split('?')[0] ?? '/panel').replace(/^\/panel\/?/, '')
+    reply.code(301).header('location', `/${rel}${qs}`)
+    reply.send()
+  }
+  app.get('/panel', legacy)
+  app.get('/panel/*', legacy)
+
+  // 静态资源单独一条：`/{source}/{action}` 是两段的数据面路由，`/*` 抢不过它，
+  // 但 `/assets/*` 以静态段打头，优先级高于参数路由 —— 所以资源必须有自己的前缀
+  app.get('/assets/*', serve)
+  // 根：SPA（其余路径若没被更具体的路由接住，也回 index.html）
+  app.get('/', serve)
+  app.get('/*', serve)
+  return serve
 }

@@ -142,14 +142,19 @@ Monitor 早于 Access/Billing/RateLimit；IPBlock 晚于 CORS；RequiredParams �
 
 ## 6. 控制面端点清单
 
+> 两段路径的归属冲突解法：`/{source}/{action}` 与面板深层链接（`/admin/plugins`）同形，
+> **按"是不是已登记的源"判定**——不是已登记源且 `Accept` 含 `text/html`（浏览器）就回面板；
+> API 客户端（`application/json` / curl）照旧 404 JSON。下游契约一个字没变。
+
 > 面板调用点全部在 `web/src/api/index.js`（186 行、47 个方法）。**这张表就是"前端不改"的全部范围。**
 
 ### 6.1 公开/半公开
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/` | `{app:"LoomProxy",status:"ok",panel:"/panel"}`（**裸对象，不是信封**） |
-| GET | `/panel`, `/panel/*` | Vue SPA（go:embed → TS 版改为读 `web/dist`，见 ③ §6） |
+| GET | `/health` | `{app:"LoomProxy",status:"ok"}`（**裸对象，不是信封**）—— 探针 |
+| GET | `/`、`/assets/*` | Vue SPA（TS 版读 `web/dist`，见 ③ §6）。**面板在根路径**，`/` 不再回 JSON |
+| GET | `/panel`、`/panel/*` | **已退役**：301 到同名干净路径（`/panel/admin/settings` → `/admin/settings`），query 保留 |
 | GET | `/favicon.svg` | 静态 |
 | GET | `/datasources` | 按套餐裁剪的源清单（`IdentityOptional`，缓存键含 uid） |
 | GET | `/data`, `/data/:source`, `/data/:source/:name` | 静态字典 |

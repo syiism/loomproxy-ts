@@ -53,7 +53,7 @@ const routes = [
   { path: '/:pathMatch(.*)*', component: NotFound, meta: { public: true } },
 ]
 
-const router = createRouter({ history: createWebHistory('/panel/'), routes })
+const router = createRouter({ history: createWebHistory('/'), routes })
 
 router.beforeEach(async (to) => {
   if (!session.ready) await initSession()

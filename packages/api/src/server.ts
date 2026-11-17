@@ -100,7 +100,7 @@ export function buildServer(deps: ApiDeps): FastifyInstance {
     ...(deps.kv ? { kv: deps.kv } : {}),
     ...(deps.pools ? { pools: deps.pools } : {}),
   })
-  registerWebRoutes(app, { webDir: deps.config.webDist, logger: deps.logger })
+  const spaFallback = registerWebRoutes(app, { webDir: deps.config.webDist, logger: deps.logger })
 
   const dispatch = createDispatcher({
     config: deps.config,
@@ -124,6 +124,7 @@ export function buildServer(deps: ApiDeps): FastifyInstance {
     ...(deps.sourceGroups ? { sourceGroups: deps.sourceGroups } : {}),
     ...(deps.nameCache ? { nameCache: deps.nameCache } : {}),
     ...(deps.pools ? { pools: deps.pools } : {}),
+    spaFallback,
   })
 
   // catch-all：新插件加载完立刻可用，不需要 removeRoute/addRoute

@@ -49,7 +49,7 @@ export async function request(path, { method = 'GET', body, query, headers: extr
 
   if (res.status === 401) {
     clearToken()
-    if (location.pathname !== '/panel/login') location.href = '/panel/login'
+    if (location.pathname !== '/login') location.href = '/login'
     throw new ApiError((payload && payload.msg) || '请先登录', 401)
   }
   if (!res.ok || (payload && payload.code !== 0)) {

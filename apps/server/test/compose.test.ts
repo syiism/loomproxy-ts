@@ -61,16 +61,19 @@ test('面板：/panel 与 /panel/* 回 SPA，产物缺失时 503 且给出构建
       env: { PLUGIN_DIR: join(root, 'plugins'), DATA_DIR: join(root, 'data'), WEB_DIST: webDir },
       logger: silentLogger(),
     })
-    const index = await app.inject({ method: 'GET', url: '/panel' })
+    const index = await app.inject({ method: 'GET', url: '/' })
     assert.equal(index.statusCode, 200)
     assert.match(index.headers['content-type'] ?? '', /text\/html/)
     assert.match(index.body, /id="app"/)
 
-    const spa = await app.inject({ method: 'GET', url: '/panel/plugins' })
-    assert.equal(spa.statusCode, 200)
-    assert.match(spa.body, /id="app"/, '深层路由回退到 index.html（前端路由接管）')
+    // 面板用 history 路由：深层链接是两段路径，与 /{source}/{action} 同形 —— 靠归属+Accept 区分
+    const deep = await app.inject({ method: 'GET', url: '/admin/plugins', headers: { accept: 'text/html,*/*' } })
+    assert.equal(deep.statusCode, 200)
+    assert.match(deep.body, /id="app"/, '浏览器访问非源路径 → 回面板')
+    const apiDeep = await app.inject({ method: 'GET', url: '/admin/plugins', headers: { accept: 'application/json' } })
+    assert.equal(apiDeep.statusCode, 404, 'API 客户端仍拿到 404 JSON（下游契约不变）')
 
-    const asset = await app.inject({ method: 'GET', url: '/panel/assets/app.js' })
+    const asset = await app.inject({ method: 'GET', url: '/assets/app.js' })
     assert.equal(asset.statusCode, 200)
     assert.match(asset.headers['content-type'] ?? '', /javascript/)
     assert.match(asset.headers['cache-control'] ?? '', /immutable/, '带 hash 的产物可以长缓存')
@@ -81,7 +84,7 @@ test('面板：/panel 与 /panel/* 回 SPA，产物缺失时 503 且给出构建
       env: { PLUGIN_DIR: join(root, 'plugins'), DATA_DIR: join(root, 'data'), WEB_DIST: join(root, 'nope') },
       logger: silentLogger(),
     })
-    const res = await missing.app.inject({ method: 'GET', url: '/panel' })
+    const res = await missing.app.inject({ method: 'GET', url: '/' })
     assert.equal(res.statusCode, 503)
     assert.match((res.json() as { msg: string }).msg, /pnpm -F @loomproxy\/web build/)
     await missing.app.close()
@@ -185,6 +188,40 @@ test('管理员口令：首启随机生成 → 写进 env 重启即生效；面�
       await attempt({ ADMIN_PASSWORD: 'env-pass', ADMIN_PASSWORD_SYNC: 'true' }, 'admin', 'env-pass'),
       200,
     )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('健康检查在 /health；/ 与 /* 是面板；/panel* 301 到根', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'loomproxy-root-'))
+  try {
+    const webDir = join(root, 'dist')
+    mkdirSync(join(webDir, 'assets'), { recursive: true })
+    writeFileSync(join(webDir, 'index.html'), '<!doctype html><div id="app"></div>')
+    writeFileSync(join(webDir, 'assets', 'app.js'), 'x')
+    const { app } = await compose({
+      env: { PLUGIN_DIR: join(root, 'plugins'), DATA_DIR: join(root, 'data'), WEB_DIST: webDir },
+      logger: silentLogger(),
+    })
+
+    const health = await app.inject({ method: 'GET', url: '/health' })
+    assert.equal(health.statusCode, 200)
+    assert.deepEqual(health.json(), { app: 'LoomProxy', status: 'ok' })
+
+    const home = await app.inject({ method: 'GET', url: '/' })
+    assert.equal(home.statusCode, 200)
+    assert.match(home.headers['content-type'] ?? '', /text\/html/, '/ 现在是面板')
+
+    const legacy = await app.inject({ method: 'GET', url: '/panel/admin/settings?x=1' })
+    assert.equal(legacy.statusCode, 301)
+    assert.equal(legacy.headers['location'], '/admin/settings?x=1', '旧链接一跳到位（干净路径），query 不丢')
+
+    // 数据面仍然走 /:source/:action（不能被 /* 抢走）
+    const api404 = await app.inject({ method: 'GET', url: '/nope/search?key=x' })
+    assert.equal(api404.statusCode, 404)
+    assert.deepEqual(api404.json(), { code: 404, msg: 'not found' })
+    await app.close()
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

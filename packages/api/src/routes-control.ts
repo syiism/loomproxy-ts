@@ -94,7 +94,8 @@ async function adminOnly(req: FastifyRequest, reply: FastifyReply, config: Confi
 export function registerControlRoutes(app: FastifyInstance, deps: ControlDeps): void {
   const { config } = deps
 
-  app.get('/', async () => ({ app: 'LoomProxy', status: 'ok', panel: '/panel' }))
+  // 健康检查（裸对象，不带信封）：`/` 现在是面板，探针挪到这里
+  app.get('/health', async () => ({ app: 'LoomProxy', status: 'ok' }))
 
   app.get('/datasources', async (_req, reply) => {
     reply.header('cache-control', 'no-store')

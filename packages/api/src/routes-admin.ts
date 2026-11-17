@@ -26,6 +26,21 @@ async function requireAdmin(req: FastifyRequest, reply: FastifyReply, deps: Deps
   return id
 }
 
+/** 公开榜单放行名单存在设置项 rank_public_sources 里（逗号分隔），不是源行上的列 */
+function rankPublicSet(settings?: { get(key: string): string }): Set<string> {
+  const raw = (settings?.get('rank_public_sources') ?? '').trim()
+  return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean))
+}
+
+function setRankPublic(settings: { get(key: string): string; set(key: string, v: string): void } | undefined, source: string, on: boolean): boolean {
+  if (!settings) throw new Error('设置存储未接')
+  const set = rankPublicSet(settings)
+  if (on) set.add(source)
+  else set.delete(source)
+  settings.set('rank_public_sources', [...set].sort().join(','))
+  return on
+}
+
 /** 下次清零时刻（平台时区下一个 0 点），形状与 Go 的 nextResetTime 一致：2026/11/18 00:00:00 */
 function nextResetLabel(tzOffsetHours: number): string {
   const offsetMs = tzOffsetHours * 3600_000
@@ -473,15 +488,83 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
   app.patch('/admin/data-sources/:id', async (req, reply) => {
     if (!(await guard(req, reply))) return
     const { id } = req.params as { id: string }
-    const ds = stores.dataSources as unknown as { update?: (id: number, patch: unknown) => void }
-    ds?.update?.(Number(id), req.body ?? {})
-    return ok({})
+    const dsStore = deps.dataSources as unknown as {
+      get?(name: string): unknown
+      listAll?(): Array<{ id: number; name: string }>
+      update?(id: number, patch: Record<string, unknown>): void
+    }
+    if (!dsStore?.update) return unavailable(reply, '数据源存储未接')
+    const row = dsStore.listAll?.().find((d) => d.id === Number(id))
+    if (!row) {
+      reply.code(404).send(fail(config.errorCode, '数据源不存在'))
+      return
+    }
+    const body = (req.body ?? {}) as {
+      display_name?: string
+      category?: string
+      description?: string
+      status?: number
+      sort_order?: number
+      group_id?: number
+      clear_group?: boolean
+      rank_public?: boolean
+    }
+    if (body.group_id !== undefined && body.clear_group) {
+      reply.code(400).send(fail(config.errorCode, 'group_id 与 clear_group 不能同时给'))
+      return
+    }
+    const patch: Record<string, unknown> = {}
+    for (const k of ['display_name', 'category', 'description', 'sort_order'] as const) {
+      if (body[k] !== undefined) patch[k] = body[k]
+    }
+    if (body.status !== undefined) {
+      if (body.status !== 0 && body.status !== 1) {
+        reply.code(400).send(fail(config.errorCode, 'status 只能是 0 或 1'))
+        return
+      }
+      patch['status'] = body.status
+    }
+    if (body.clear_group) patch['group_id'] = null
+    else if (body.group_id !== undefined) {
+      if (!stores.sourceGroups?.list().some((g) => g.id === body.group_id)) {
+        reply.code(400).send(fail(config.errorCode, '分组不存在'))
+        return
+      }
+      patch['group_id'] = body.group_id
+    }
+    if (Object.keys(patch).length === 0 && body.rank_public === undefined) {
+      reply.code(400).send(fail(config.errorCode, '无更新字段'))
+      return
+    }
+    dsStore.update(Number(id), patch)
+    const rankPublic = body.rank_public === undefined ? rankPublicSet(stores.settings).has(row.name) : setRankPublic(stores.settings, row.name, body.rank_public)
+    const fresh = dsStore.listAll?.().find((d) => d.id === Number(id)) ?? row
+    return ok({ ...fresh, rank_public: rankPublic })
   })
   app.delete('/admin/data-sources/:id', async (req, reply) => {
     if (!(await guard(req, reply))) return
     const { id } = req.params as { id: string }
-    const ds = stores.dataSources as unknown as { remove?: (id: number) => boolean }
-    ds?.remove?.(Number(id))
+    const dsStore = deps.dataSources as unknown as {
+      listAll?(): Array<{ id: number; name: string }>
+      remove?(id: number): boolean
+    }
+    const row = dsStore?.listAll?.().find((d) => d.id === Number(id))
+    if (!row) {
+      reply.code(404).send(fail(config.errorCode, '数据源不存在'))
+      return
+    }
+    // 「限额即授权」：被套餐引用的源不能删，否则那一行限额会指向一个看不见的源
+    if (stores.quota?.isSourceReferenced(row.name)) {
+      reply.code(400).send(fail(config.errorCode, '该数据源被套餐引用，无法删除'))
+      return
+    }
+    dsStore.remove?.(Number(id))
+    // 顺手把它从公开榜放行名单里摘掉（源都没了，留着只会让名单越长越脏）
+    try {
+      setRankPublic(stores.settings, row.name, false)
+    } catch {
+      /* 设置存储不可用时不影响删除结果 */
+    }
     return ok({})
   })
   // 平台默认地址（个人级在 /user/source-configs）：回落顺序 个人 → 平台 → 源内置

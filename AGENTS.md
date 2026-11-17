@@ -67,6 +67,10 @@ PLUGIN_DIR=plugins node apps/server/src/main.ts          # ③ 起服务 → cur
 
 ## 5.1 面板与原仓的差异（目前只有两处）
 
+- 面板**挂在根路径**（`/` + `/assets/*`），不再是 `/panel`（退役：301 到干净路径）。
+  两段路径的归属冲突用"是不是已登记源 + Accept 是否 text/html"区分，**不要**退回 hash 路由。
+- 健康检查在 `/health`；`/` 是面板，不再回 JSON（探针/监控改指 `/health`）。
+
 - `web/src/pages/admin/Settings.vue` 删掉了末尾那行裸 `load()`：`onMounted` 已经调过，
   原样保留会让 `/admin/settings` 一次进页面打两发（其余页面的裸 `load()` 是唯一的加载点，不要动）。
 - 新增页/入口三件套（`api/index.js` 方法、`main.js` 路由、`App.vue` 的 `adminNavGroups` + `iconMap`/`SidebarIcon`）。

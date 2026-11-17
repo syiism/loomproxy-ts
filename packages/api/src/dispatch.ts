@@ -37,6 +37,8 @@ export type DispatchDeps = {
   settings: SettingsStore
   ledger: Ledger
   limiter: RateLimiter
+  /** 面板回退：路径不是任何数据源、且调用方是浏览器时，把 index.html 交给它（history 路由深层链接） */
+  spaFallback?: (req: { url: string }, reply: import('fastify').FastifyReply) => Promise<void>
   /** 明细写入口：与平台其余部分同一条（出口 hook 记，不在 handler 里记） */
   callLogs?: CallLogStore
   /** 会话与账号密钥：有它们才做"撤销即刻失效/密钥认出归属" */
@@ -65,6 +67,14 @@ export function createDispatcher(deps: DispatchDeps) {
     const { source, action } = req.params as { source: string; action: string }
     const resolved = deps.host.registryRef.resolve(source, action as ActionName)
     if (!resolved) {
+      // 面板用 history 路由，深层链接（如 /admin/plugins）也是两段路径，与 /{source}/{action} 同形。
+      // 靠**归属**区分：不是已登记的源，且调用方是浏览器（Accept 含 text/html）→ 回面板；
+      // 其它（API 客户端 / curl）照旧 404 JSON —— 下游契约不变。
+      const wantsHtml = String(req.headers['accept'] ?? '').includes('text/html')
+      if (wantsHtml && deps.spaFallback && !deps.host.registryRef.get(source)) {
+        await deps.spaFallback(req, reply)
+        return
+      }
       reply.code(404).send({ code: 404, msg: 'not found' })
       return
     }

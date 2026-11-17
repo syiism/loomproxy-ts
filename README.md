@@ -38,7 +38,8 @@ web                 —  **原 Go 项目面板原样搬入**（Vue3 + Vite，781
 
 ```bash
 pnpm install
-pnpm run check        # = 分层检查 + tsc 类型检查 + 全部用例（node --test）
+pnpm run check        # = 分层 + tsc + 面板构建 + 面板契约 + 全部用例
+# 探针：GET /health   （裸对象 {app,status}）；面板在根路径 /（/panel 已退役，301 到同名干净路径）
 pnpm run check:layers # 只看依赖方向（顺带断言树里没有 Go 代码）
 pnpm run check:types  # tsc -p tsconfig.json（noEmit）
 pnpm test             # 35 个用例，不连网、不连 DB
