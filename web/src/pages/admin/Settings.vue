@@ -508,5 +508,6 @@ const confirmDelete = async () => {
 }
 
 onMounted(() => { load(); loadSourceChoices(); revealObserve() })
-load()
+// 注：这里原本还有一行裸 `load()`（从 base 原样带来的）。onMounted 已经调过一次，
+// 那行会让 /admin/settings 一次进页面打两发——删掉（本仓与原仓的第一处有意识偏离）。
 </script>

@@ -400,7 +400,21 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
   // ---- 设置 ----
   app.get('/admin/settings', async (req, reply) => {
     if (!(await guard(req, reply))) return
-    return ok({ list: stores.settings?.list() ?? [], sensitive_keys: stores.settings?.sensitiveKeys() ?? [] })
+    // 形状与 Go 的 ListSettings 一致：**items**（不是 list）+ sensitive_keys；
+    // 源声明位里的设置项带上 source/source_display，面板据此把它们归到各自的源卡片。
+    const rows = stores.settings?.list() ?? []
+    const declared = new Map<string, { code: string; display: string }>()
+    for (const entry of deps.host?.registryRef.list() ?? []) {
+      for (const decl of entry.meta.settings ?? []) declared.set(decl.key, { code: entry.code, display: entry.meta.display })
+    }
+    const items = rows.map((r) => {
+      const src = declared.get(r.key)
+      return {
+        ...r,
+        ...(src ? { source: src.code, source_display: src.display } : {}),
+      }
+    })
+    return ok({ items, sensitive_keys: stores.settings?.sensitiveKeys() ?? [] })
   })
   app.post('/admin/settings', async (req, reply) => {
     if (!(await guard(req, reply))) return

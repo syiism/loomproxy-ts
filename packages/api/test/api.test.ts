@@ -570,3 +570,21 @@ test('默认设置真的生效：注册开关/默认角色与套餐/邮箱名单
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('/admin/settings 形状：items + sensitive_keys（面板读 resp.items，读 list 会空白）', async () => {
+  const { app, root, settings } = await makeApp()
+  try {
+    settings.set('announcement', 'hello')
+    const res = await app.inject({ method: 'GET', url: '/admin/settings', headers: { authorization: `Bearer ${adminToken()}` } })
+    assert.equal(res.statusCode, 200)
+    const data = res.json() as { data: { items?: unknown[]; list?: unknown[]; sensitive_keys?: string[] } }
+    assert.ok(Array.isArray(data.data.items), '必须是 items（Go ListSettings 的形状）')
+    assert.equal(data.data.list, undefined, '不要再回 list：面板读不到它会整页空白')
+    assert.ok(Array.isArray(data.data.sensitive_keys))
+    const hit = (data.data.items as Array<{ key: string; value: string }>).find((i) => i.key === 'announcement')
+    assert.equal(hit?.value, 'hello')
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})

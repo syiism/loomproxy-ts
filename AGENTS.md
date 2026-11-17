@@ -65,6 +65,12 @@ PLUGIN_DIR=plugins node apps/server/src/main.ts          # ③ 起服务 → cur
   `packages/api/src/web.ts` 托管（`/panel/*` 回退 index.html，`assets/` 长缓存，其余 no-cache）。
 - 改完必须 `pnpm run check:web`；`pnpm run check` 已经包含它。
 
+## 5.1 面板与原仓的差异（目前只有两处）
+
+- `web/src/pages/admin/Settings.vue` 删掉了末尾那行裸 `load()`：`onMounted` 已经调过，
+  原样保留会让 `/admin/settings` 一次进页面打两发（其余页面的裸 `load()` 是唯一的加载点，不要动）。
+- 新增页/入口三件套（`api/index.js` 方法、`main.js` 路由、`App.vue` 的 `adminNavGroups` + `iconMap`/`SidebarIcon`）。
+
 ## 6. 数据库（packages/store）
 
 - **只有这一层碰持久化**：其他层拿 `UserStore/SettingsStore/DataSourceStore/CallLogStore…` 接口。
