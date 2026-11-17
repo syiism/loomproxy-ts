@@ -1,0 +1,15 @@
+{
+  "sdk_version": "^1",
+  "isolation": "worker",
+  "entry": "./index.mjs",
+  "params": { "search": ["key"] },
+  "meta": {
+    "code": "worker_one",
+    "display": "夹具（worker 隔离）",
+    "category": "fixture",
+    "sort_order": 20,
+    "status": 1,
+    "actions": ["search"],
+    "media_type": "novel"
+  }
+}

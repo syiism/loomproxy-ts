@@ -31,7 +31,8 @@
 | 内存 | 每次更新留一代（模块 + 包级缓存），有界但不回收 | 每插件常驻一个线程（约 30–50MB），36 源全常驻 ≈ 1–2GB |
 | 适用 | 自有、受信、逻辑轻的源（今天 36 个源的多数） | 重解析/重解密源（`zj_novel`）、第三方插件、可疑插件 |
 
-**默认 A，manifest 里可选 `isolation: "worker"`**。理由：自有源受信、36 个源常驻线程的内存代价不可接受、
+**默认 A，manifest 里可选 `isolation: "worker"`**（2026-11-17 已落地：worker 走独立线程，
+取数/设置/池经线协议回主线程执行；换代先 drain 再 terminate）。理由：自有源受信、36 个源常驻线程的内存代价不可接受、
 而 A 的唯一真代价（不回收）在"偶尔更新"的频率下是有界的。A 的前提取决于一条实现约束：
 
 > **注册表必须在每次请求时解析，不许在路由注册时把 handler 闭包捕获下来。**
@@ -156,9 +157,11 @@ worker（插件）            ┌─ source-kit 提供的 ctx.fetch(...) ─→ 
 ```
 
 - worker 里**没有 undici 实例**，`fetch` 是 await 一个 `postMessage`；一次 RPC ≈ 亚毫秒，
-  对 100ms–5s 的上游请求可忽略。
+  对 100ms–5s 的上游请求可忽略。**已实现**：`packages/source-host/src/{bridge,worker-entry,worker-host}.ts`
+  （取数三种形状、池 acquire/report/cooldown、设置按"每次调用带快照"避免同步接口变异步）。
 - `singleflight`/上游缓存留在主线程 → 一个源的并发合并在跨代、跨 worker 时依然成立。
-- 设置项：主线程写库后 `broadcast` 到各 worker（同时 worker 侧缓存 TTL 10s，读不到就 RPC）。
+- 设置项：主线程**每次调用**现读一份快照带给 worker（`settings.list()`），
+  所以"改了不重启就生效"这条在 worker 模式下同样成立；不做过线同步读（会把同步接口逼成异步）。
 - 池的 `Create/Refresh/Claim` 钩子同样经 RPC 到主线程执行（它们要发上游请求）。
 
 ## 9. 安全边界（写死，别当可选项）

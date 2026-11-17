@@ -17,6 +17,8 @@ export type RegisteredSource = {
   /** 每个动作注入哪些 query（manifest.params；缺省用标准参数集，见 api/params.ts） */
   params?: Record<string, string[]>
   def: SourceDefinition
+  /** worker 隔离模式的执行入口（in-process 模式下为 undefined，直接调 def.handlers） */
+  invoke?: (action: ActionName, params: import('@loomproxy/contract').Params) => Promise<unknown>
 }
 
 export type Resolved = { entry: RegisteredSource; handler: NonNullable<SourceDefinition['handlers'][ActionName]> }
@@ -77,8 +79,8 @@ export class SourceRegistry {
     const entry = this.entries.get(code)
     if (!entry || entry.state !== 'active') return undefined
     const handler = entry.def.handlers[action]
-    if (!handler) return undefined
-    return { entry, handler }
+    if (!handler && !entry.invoke) return undefined
+    return { entry, handler: handler ?? (() => Promise.resolve(undefined)) }
   }
 
   list(): RegisteredSource[] {

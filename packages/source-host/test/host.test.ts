@@ -1,4 +1,4 @@
-import test from 'node:test'
+import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
 import { cpSync, mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -10,6 +10,12 @@ import { SourceHost, compareVersion, sdkCompatible } from '../src/index.ts'
 
 const FIXTURES = join(import.meta.dirname, 'fixtures')
 
+const created: Array<{ dispose(): Promise<void> }> = []
+after(async () => {
+  // worker 插件是真实线程：用例结束不收，Test runner 会等它们退出（表现为整个文件卡住）
+  for (const h of created) await h.dispose()
+})
+
 function makeHost(pluginDir: string, drainTimeoutMs = 2_000) {
   const config = loadConfig({})
   const logger = silentLogger()
@@ -18,12 +24,14 @@ function makeHost(pluginDir: string, drainTimeoutMs = 2_000) {
   const dataSources = new InMemoryDataSources()
   const upstream = new Upstream({ config, logger })
   const host = new SourceHost({ pluginDir, logger, registry, settings, dataSources, upstream, drainTimeoutMs })
+  created.push(host)
   return { host, registry, settings, dataSources }
 }
 
-function tmpPlugins(): string {
+function tmpPlugins(extra: string[] = []): string {
   const dir = mkdtempSync(join(tmpdir(), 'loomproxy-plugins-'))
-  for (const name of ['ok_one', 'bad_manifest', 'bad_sdk', 'throws']) {
+  // worker 夹具会起真实线程：只在需要它的用例里拷（否则临时目录一删，worker 的 import 就变成未处理拒绝）
+  for (const name of ['ok_one', 'bad_manifest', 'bad_sdk', 'throws', ...extra]) {
     cpSync(join(FIXTURES, name), join(dir, name), { recursive: true })
   }
   return dir
@@ -145,6 +153,89 @@ test('卸载与禁用：禁用后派发 404，卸载后注册表没有它', asyn
     await host.unload('ok_one')
     assert.equal(registry.get('ok_one'), undefined)
   } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('worker 隔离：插件跑在独立线程里，宿主按 invoke 调用并能换代/卸载', async () => {
+  const dir = tmpPlugins(['worker_one'])
+  try {
+    const { host, registry } = makeHost(dir)
+    const infos = await host.scanSync()
+    const w = infos.find((i) => i.code === 'worker_one')
+    assert.equal(w?.state, 'active')
+    assert.equal(w?.isolation, 'worker')
+
+    const entry = registry.get('worker_one')
+    assert.ok(entry?.invoke, 'worker 插件走 invoke，不把 handler 拿回主线程')
+    const result = (await entry!.invoke!('search' as never, { key: 'abc' } as never)) as {
+      bookList: Array<{ name: string }>
+    }
+    assert.equal(result.bookList[0]?.name, 'worker 搜到：abc')
+
+    // 换代：reload 后仍可用（老 worker 被 drain + terminate）
+    const info = await host.reload('worker_one')
+    assert.equal(info.state, 'active')
+    const again = (await registry.get('worker_one')!.invoke!('search' as never, { key: 'xyz' } as never)) as {
+      bookList: Array<{ name: string }>
+    }
+    assert.equal(again.bookList[0]?.name, 'worker 搜到：xyz')
+
+    // 卸载：注册表摘干净 + 线程收掉（先 dispose 再删临时目录，否则 worker 的 import 会炸在删除之后）
+    await host.unload('worker_one')
+    assert.equal(registry.get('worker_one'), undefined)
+    await host.dispose()
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('worker 的取数走主线程桥：worker 里没有自己的 undici，缓存/熔断仍是一份', async () => {
+  // 主线程起一个极小上游，worker 里的 handler 用 ctx.fetch.text 拉它
+  const { createServer } = await import('node:http')
+  let hits = 0
+  const server = createServer((_req, res) => {
+    hits++
+    res.setHeader('content-type', 'text/plain')
+    res.end(`hello-${hits}`)
+  })
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
+  const port = (server.address() as { port: number }).port
+
+  const dir = mkdtempSync(join(tmpdir(), 'loomproxy-worker-bridge-'))
+  const v = join(dir, 'worker_fetch', '1.0.0')
+  mkdirSync(v, { recursive: true })
+  writeFileSync(
+    join(v, 'manifest.json'),
+    JSON.stringify({
+      sdk_version: '^1',
+      isolation: 'worker',
+      entry: './index.mjs',
+      params: { search: ['key'] },
+      meta: { code: 'worker_fetch', display: 'W', category: 'fixture', actions: ['search'] },
+    }),
+  )
+  writeFileSync(
+    join(v, 'index.mjs'),
+    `export default { handlers: { search: async (ctx) => {
+       const body = await ctx.fetch.text(ctx.params.key, {});
+       return { bookList: [{ bookId: 'x', name: body, author: '', kind: '', wordCount: '', lastChapter: '', intro: '', coverUrl: '' }] };
+     } } }`,
+  )
+
+  try {
+    const { host, registry } = makeHost(dir)
+    await host.scanSync()
+    const invoke = registry.get('worker_fetch')?.invoke
+    assert.ok(invoke, 'worker 插件走 invoke')
+    const one = (await invoke('search' as never, { key: `http://127.0.0.1:${port}/a` } as never)) as {
+      bookList: Array<{ name: string }>
+    }
+    assert.equal(one.bookList[0]?.name, 'hello-1', '上游由主线程执行，结果回传 worker')
+    assert.equal(hits, 1)
+    await host.dispose()
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()))
     rmSync(dir, { recursive: true, force: true })
   }
 })

@@ -175,7 +175,7 @@ export function createDispatcher(deps: DispatchDeps) {
       const started = Date.now()
       let result: unknown
       try {
-        result = await handler({
+        const ctx = {
           source,
           action: action as ActionName,
           params,
@@ -191,7 +191,9 @@ export function createDispatcher(deps: DispatchDeps) {
                 },
               }
             : {}),
-        })
+        }
+        result = entry.invoke ? await entry.invoke(action as ActionName, params) : await handler(ctx)
+
       } catch (e) {
         // 客户端取消：出口静默（对应 Go 的 context.Canceled 分支），不写响应体
         if (e instanceof ClientCanceled || ac.signal.aborted) {

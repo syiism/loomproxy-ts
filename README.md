@@ -78,7 +78,7 @@ Node 24 直接跑 `.ts`（type stripping），所以**用例不需要构建**；
 | **数据库读写** | ✅ SQLite（`node:sqlite` 内置，无 native/cgo）：users/roles/user_roles/sessions/api_keys/system_settings/data_sources/plans/api_call_logs/api_call_stats/quota_limits/user_quota_overrides/quota_usage_logs/quota_costs，DDL 在 `packages/store/src/sqlite.ts` |
 | **额度域** | ✅ 限额即授权（scope=source）、批量授权/复制、用户覆盖、日界起算点刷新、成功记账（去重窗口）、超额 429、看板/我的流水/admin 流水、接口成本表 |
 | drizzle/sqlite 持久化（设置、data_sources、明细、号池表） | ⛔ 未接（`store` 现为内存实现） |
-| worker 隔离模式 | ⛔ 未接（设计见 ④ §2/§8；需要 RPC 取数通道） |
+| worker 隔离模式 | ✅ manifest `isolation:"worker"`：独立线程跑 handler，取数/设置/池经线协议回主线程（缓存/熔断/代理仍一份），换代先 drain 再 terminate |
 | 额度**转移**（`/quota/transfer*`、admin 代转）、卡密、分组、定时、IP 拉黑、设备、套餐级接口限速（`quota_cost_plans`） | ⛔ 未接：显式 **501 + 一句人能照着做的话**（不是成功空响应）。面板照旧显示，报错原样 toast |
 | drizzle / MySQL / PostgreSQL | ⛔ 本轮用 `node:sqlite` + 手写 DDL；接口不变，换 provider 时只动 `packages/store` |
 

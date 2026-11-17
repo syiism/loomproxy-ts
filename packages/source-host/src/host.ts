@@ -14,6 +14,7 @@ import {
 } from '@loomproxy/source-kit'
 import type { DataSourceStore, SettingsStore } from '@loomproxy/store'
 import { compareVersion, describeVersion, listVersions, sdkCompatible } from './manifest.ts'
+import { WorkerPluginHost } from './worker-host.ts'
 
 export type PoolSink = {
   register(name: string, entry: { provider: import('@loomproxy/contract').PoolProvider; config?: Partial<import('@loomproxy/contract').PoolConfig> }): unknown
@@ -55,6 +56,8 @@ export class SourceHost {
   private readonly cursor = new Map<string, number>()
   private readonly loaded = new Map<string, Loaded>()
   private readonly failures = new Map<string, string>()
+  /** worker 隔离模式下的插件句柄（in-process 的插件不在这张表里） */
+  private readonly workers = new Map<string, WorkerPluginHost>()
   private readonly inflight = new Map<string, number>()
   private readonly drainWaiters = new Map<string, (() => void)[]>()
   private readonly fetch: ReturnType<typeof createFetchFacade>
@@ -183,6 +186,47 @@ export class SourceHost {
       }
     }
 
+    // worker 隔离模式（④ §2）：插件跑在独立线程里，取数/设置/池仍回主线程执行。
+    // 线程的好处是真能卸载（in-process 换代码只是换指针，老模块回收不掉）。
+    if (desc.manifest.isolation === 'worker') {
+      const prevWorker = this.workers.get(code)
+      if (prevWorker) {
+        await prevWorker.drain()
+        await prevWorker.terminate()
+        this.workers.delete(code)
+      }
+      this.deps.settings.register(desc.manifest.meta.settings ?? [])
+      this.deps.dataSources.upsert(desc.manifest.meta)
+      const worker = new WorkerPluginHost({
+        code,
+        entry: desc.entry,
+        version,
+        actions: desc.manifest.meta.actions,
+        logger: this.deps.logger,
+        upstream: this.deps.upstream,
+        settings: this.deps.settings as unknown as {
+          get(key: string): string
+          list(): Array<{ key: string; value: string }>
+        },
+        ...(this.deps.pools ? { pools: this.deps.pools as never } : {}),
+      })
+      this.workers.set(code, worker)
+      this.deps.registry.swap({
+        code,
+        meta: desc.manifest.meta,
+        version,
+        isolation: desc.manifest.isolation,
+        state: 'active',
+        ...(desc.manifest.params ? { params: desc.manifest.params } : {}),
+        def: { handlers: {} },
+        invoke: (action, params) => worker.call(action, params),
+      })
+      this.loaded.set(code, { code, version, dir: desc.dir, entry: desc.entry, manifest: desc.manifest })
+      this.failures.delete(code)
+      this.deps.logger.info(`插件 ${code}@${version} 已生效（worker 隔离，generation=${this.registry.generation}）`)
+      return
+    }
+
     // 声明落地：幂等（不覆盖管理员改过的值与 status）
     this.deps.settings.register(desc.manifest.meta.settings ?? [])
     this.deps.dataSources.upsert(desc.manifest.meta)
@@ -287,10 +331,25 @@ export class SourceHost {
   async unload(code: string): Promise<void> {
     const cur = this.registry.get(code)
     const poolName = cur?.def.pool?.name
+    const worker = this.workers.get(code)
+    if (worker) {
+      await worker.drain()
+      await worker.terminate()
+      this.workers.delete(code)
+    }
     this.registry.remove(code)
     if (poolName) await this.deps.pools?.unregister(poolName)
     if (cur?.def.dispose) await cur.def.dispose()
     this.failures.delete(code)
+  }
+
+  /** 停机/测试收尾：把所有 worker 插件停掉（in-process 的没有线程要收） */
+  async dispose(): Promise<void> {
+    for (const [code, worker] of this.workers) {
+      await worker.drain(2_000)
+      await worker.terminate()
+      this.workers.delete(code)
+    }
   }
 
   // ---------- 查询 ----------
