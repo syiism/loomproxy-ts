@@ -18,6 +18,7 @@
       "@loomproxy/kernel": ["packages/kernel/src/index.ts"],
       "@loomproxy/store": ["packages/store/src/index.ts"],
       "@loomproxy/source-kit": ["packages/source-kit/src/index.ts"],
+      "@loomproxy/pool": ["packages/pool/src/index.ts"],
       "@loomproxy/gate": ["packages/gate/src/index.ts"],
       "@loomproxy/source-host": ["packages/source-host/src/index.ts"],
       "@loomproxy/api": ["packages/api/src/index.ts"]

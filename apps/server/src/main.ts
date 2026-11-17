@@ -22,10 +22,11 @@ function debounce<T extends (...args: never[]) => void>(fn: T, ms: number): T {
 
 async function main(): Promise<void> {
   loadEnv()
-  const { config, app, host, schedules } = await compose()
+  const { config, app, host, schedules, pools } = await compose()
   mkdirSync(config.dataDir, { recursive: true })
 
   const shutdown = new ShutdownRegistry()
+  shutdown.register(() => pools.stopAll())
   shutdown.register(() => app.close())
 
   // 热更新：插件目录里文件变化 → 只 reload 受影响的那个 code，进程不重启

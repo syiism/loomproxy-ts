@@ -24,6 +24,7 @@ import type {
 import type { DbUsers } from '@loomproxy/store'
 import type { SourceHost } from '@loomproxy/source-host'
 import { Ledger, RateLimiter } from '@loomproxy/gate'
+import type { Pool } from '@loomproxy/pool'
 import { callMetaOf, toCallLogRow } from './calls.ts'
 import { createDispatcher } from './dispatch.ts'
 import { registerWebRoutes } from './web.ts'
@@ -49,6 +50,7 @@ export type ApiDeps = {
   nameCache?: DbNameCache
   schedules?: DbSchedules
   kv?: DbKv
+  pools?: { statusAll(): unknown[]; get(name: string): Pool | undefined }
   quotaExtra?: DbQuotaExtra
   sourceGroups?: DbSourceGroups
   ledger?: Ledger
@@ -96,6 +98,7 @@ export function buildServer(deps: ApiDeps): FastifyInstance {
     ...(deps.nameCache ? { nameCache: deps.nameCache } : {}),
     ...(deps.schedules ? { schedules: deps.schedules } : {}),
     ...(deps.kv ? { kv: deps.kv } : {}),
+    ...(deps.pools ? { pools: deps.pools } : {}),
   })
   registerWebRoutes(app, { webDir: deps.config.webDist, logger: deps.logger })
 
@@ -119,6 +122,8 @@ export function buildServer(deps: ApiDeps): FastifyInstance {
     ...(deps.devices ? { devices: deps.devices } : {}),
     ...(deps.quotaExtra ? { quotaExtra: deps.quotaExtra } : {}),
     ...(deps.sourceGroups ? { sourceGroups: deps.sourceGroups } : {}),
+    ...(deps.nameCache ? { nameCache: deps.nameCache } : {}),
+    ...(deps.pools ? { pools: deps.pools } : {}),
   })
 
   // catch-all：新插件加载完立刻可用，不需要 removeRoute/addRoute

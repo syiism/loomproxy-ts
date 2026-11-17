@@ -4,6 +4,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import { ClientCanceled, isUpstreamError, newSubject } from '@loomproxy/contract'
 import type { Config, Logger, Upstream } from '@loomproxy/kernel'
+import type { Pool } from '@loomproxy/pool'
 import { Ledger, RateLimiter, accessMessage, contentKeyOf, sourceAccessVerdict } from '@loomproxy/gate'
 import { createFetchFacade, observeCall, stampSearchSource } from '@loomproxy/source-kit'
 import type {
@@ -46,6 +47,8 @@ export type DispatchDeps = {
   nameCache?: { remember(kind: 'book' | 'chapter', source: string, ident: string, name: string): void }
   quotaExtra?: { rateSpecFor(planId: number | null, source: string, action: string): { intervalMs?: number; count?: number; windowMs?: number } }
   blockedIPs?: { isBlocked(ip: string): boolean }
+  /** 池运行时（packages/pool）：源通过 ctx.pool(name) 取号 */
+  pools?: { get(name: string): Pool | undefined }
 }
 
 function sanitizeMessage(msg: string): string {
@@ -179,6 +182,15 @@ export function createDispatcher(deps: DispatchDeps) {
           signal: ac.signal,
           fetch,
           settings: deps.host.settingsReader(),
+          ...(deps.pools
+            ? {
+                pool: (name: string) => {
+                  const pool = deps.pools?.get(name)
+                  if (!pool) throw new Error(`池 ${name} 未登记`)
+                  return pool
+                },
+              }
+            : {}),
         })
       } catch (e) {
         // 客户端取消：出口静默（对应 Go 的 context.Canceled 分支），不写响应体

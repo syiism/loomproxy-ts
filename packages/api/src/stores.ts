@@ -36,6 +36,7 @@ export type ApiStores = {
   nameCache?: DbNameCache
   schedules?: DbSchedules
   kv?: DbKv
+  pools?: { statusAll(): unknown[] }
   quotaExtra?: DbQuotaExtra
   sourceGroups?: DbSourceGroups
 }

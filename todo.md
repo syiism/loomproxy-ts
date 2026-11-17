@@ -11,9 +11,10 @@
 
 ## C. 结构性缺口（不是一两个端点能收的）
 
+（C1 号池运行时已完成：`packages/pool` + fq_novel 的会话池接入）
+
 | # | 缺口 | 说明 |
 |---|---|---|
-| C1 | 号池运行时 | `GET /admin/pools` 恒回 `[]`：`source-kit` 有状态机，但没接设备表/维护协程。**需要先有一个用池的源**（fq_novel 走 fanq 会话池，不走本仓 pool） |
 | C4 | worker 隔离模式 | 插件 manifest 支持 `isolation:"worker"`，宿主只实现了 in-process；需要 RPC 取数通道（④ §8） |
 
 ## 已完成（供对照，不再列在上面）
@@ -40,5 +41,8 @@
 - **B6** 数据源定时启停 `source_schedules`（daily 钟点 / once 绝对时刻；`in_window`/`window_text`/`applied` 现算，
   main.ts 每 60s 一拍，停机时 clear）
 - **C2** 命名缓存 `name_cache` + 回填（`POST /admin/monitor/backfill-subjects` 返回 books/chapters 补了多少行）
+- **C1** 号池运行时 `packages/pool`（墙钟/摊薄两种形态、冷热/耗尽/死号/冷却、钩子带截止、快照脱敏）+
+  `DeviceStore` 端口声明在 contract、实现在 store（单向依赖）；fq_novel 用 `defineSource({ pool })`
+  接成会话池（spread 型，建号走 device_register，取号后写 pinned 会话文件给协议层）
 - **C6** 面板—后端契约门禁 `tools/check-web-contract.mjs`（扫 `web/src/api/index.js` 的调用点对后端路由表，
   已进 `pnpm run check`；模板字面量路由按通配段匹配）——对应 Go 版 nav-check 那一族

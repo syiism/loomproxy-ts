@@ -1,6 +1,6 @@
 // 源作者的唯一入口形状：handler 收 ctx、吐 DTO。
 // ctx 里的东西全部由 host 注入——源不 import store/api，也不自己 new HTTP 客户端。
-import type { ActionName, Params } from '@loomproxy/contract'
+import type { ActionName, Device, Params, PoolConfig, PoolProvider } from '@loomproxy/contract'
 
 /** 只读设置视图：声明在这里，实现在 store（source-kit 不依赖 store） */
 export interface SettingsReader {
@@ -28,6 +28,13 @@ export interface FetchFacade {
 
 export type HandlerContext = {
   source: string
+  /** 取号端口：有池的源用它（fq_novel 的会话池就是这样接的） */
+  pool?: (name: string) => {
+    acquire(): Promise<Device>
+    report(err: unknown): void
+    cooldown(ident: string, until?: number, note?: string): void
+    success(): void
+  }
   action: ActionName
   /** 值永远是字符串；__uid 是平台注入的用户 ID */
   params: Params
@@ -44,8 +51,17 @@ export type BootContext = {
   log: (msg: string) => void
 }
 
+/** 源自带的池声明：装配层负责注册与启停（源包不认识宿主） */
+export type PoolDeclaration = {
+  name: string
+  provider: PoolProvider
+  config?: Partial<PoolConfig>
+}
+
 export type SourceDefinition = {
   handlers: Partial<Record<ActionName, Handler>>
+  /** 该源的设备/凭证池（可选）；handler 里用 ctx.pool(name) 取号 */
+  pool?: PoolDeclaration
   /** 装配后钩子：每次加载都调，**必须幂等**（迁移-TS-2 §2） */
   onBoot?: (ctx: BootContext) => void | Promise<void>
   /** 卸载/换代时释放资源（定时器、句柄） */

@@ -14,6 +14,7 @@ const LAYER = {
   kernel: 1,
   store: 2,
   'source-kit': 2,
+  pool: 2,
   gate: 3,
   'source-host': 3,
   api: 4,
@@ -26,12 +27,14 @@ const ALLOW = {
   kernel: ['contract'],
   store: ['contract', 'kernel'],
   'source-kit': ['contract', 'kernel'],
+  // 池运行时：只认契约（DeviceStore 端口声明在 contract）与 kernel
+  pool: ['contract', 'kernel'],
   gate: ['contract', 'kernel', 'store'],
   'source-host': ['contract', 'kernel', 'store', 'source-kit'],
-  api: ['contract', 'kernel', 'store', 'source-kit', 'gate', 'source-host'],
+  api: ['contract', 'kernel', 'store', 'source-kit', 'gate', 'source-host', 'pool'],
   // 插件（源包）只认 SDK：不许 import store/gate/api/server，也不许互相 import（同族共享包例外，后续登记）
   plugins: ['contract', 'kernel', 'source-kit'],
-  server: ['contract', 'kernel', 'store', 'source-kit', 'gate', 'source-host', 'api'],
+  server: ['contract', 'kernel', 'store', 'source-kit', 'gate', 'source-host', 'pool', 'api'],
 }
 
 function walk(dir, out = []) {

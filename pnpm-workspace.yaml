@@ -3,6 +3,7 @@ packages:
   - "packages/kernel"
   - "packages/store"
   - "packages/source-kit"
+  - "packages/pool"
   - "packages/gate"
   - "packages/source-host"
   - "packages/api"

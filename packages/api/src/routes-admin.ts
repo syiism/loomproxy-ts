@@ -679,10 +679,10 @@ h1{font-size:18px}code{font-family:ui-monospace,Menlo,monospace}</style>
     return ok(cache.backfill())
   })
 
-  // ---- 号池：本轮没有池运行时（③ §9），空列表而不是假数据 ----
+  // ---- 号池（packages/pool 的运行期快照；没有池时是空列表） ----
   app.get('/admin/pools', async (req, reply) => {
     if (!(await guard(req, reply))) return
-    return ok([])
+    return ok(stores.pools?.statusAll() ?? [])
   })
 
   // ---- 公开榜（登录用户可读）：直接按明细聚合 ----

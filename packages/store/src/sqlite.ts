@@ -222,6 +222,21 @@ CREATE TABLE IF NOT EXISTS source_schedules (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS pool_devices (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pool TEXT NOT NULL,
+  ident TEXT NOT NULL,
+  attrs TEXT NOT NULL DEFAULT '{}',
+  payload TEXT,
+  status TEXT NOT NULL DEFAULT 'cold',
+  total_quota INTEGER NOT NULL DEFAULT 0,
+  used_quota INTEGER NOT NULL DEFAULT 0,
+  expire_at TEXT,
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (pool, ident)
+);
 CREATE TABLE IF NOT EXISTS kv_state (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL DEFAULT '',

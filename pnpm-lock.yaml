@@ -36,6 +36,9 @@ importers:
       '@loomproxy/kernel':
         specifier: workspace:*
         version: link:../../packages/kernel
+      '@loomproxy/pool':
+        specifier: workspace:*
+        version: link:../../packages/pool
       '@loomproxy/source-host':
         specifier: workspace:*
         version: link:../../packages/source-host
@@ -57,6 +60,9 @@ importers:
       '@loomproxy/kernel':
         specifier: workspace:*
         version: link:../kernel
+      '@loomproxy/pool':
+        specifier: workspace:*
+        version: link:../pool
       '@loomproxy/source-host':
         specifier: workspace:*
         version: link:../source-host
@@ -108,6 +114,15 @@ importers:
       '@loomproxy/source-kit':
         specifier: workspace:*
         version: link:../../source-kit
+
+  packages/pool:
+    dependencies:
+      '@loomproxy/contract':
+        specifier: workspace:*
+        version: link:../contract
+      '@loomproxy/kernel':
+        specifier: workspace:*
+        version: link:../kernel
 
   packages/source-host:
     dependencies:

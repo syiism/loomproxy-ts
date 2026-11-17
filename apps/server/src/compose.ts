@@ -18,6 +18,7 @@ import {
   DbSchedules,
   DbQuotaExtra,
   DbSourceGroups,
+  DbPoolDevices,
   DbQuota,
   DbSourceConfigs,
   DbSettings,
@@ -25,6 +26,7 @@ import {
   SqliteDb,
   hashPassword,
 } from '@loomproxy/store'
+import { createPoolRuntime } from '@loomproxy/pool'
 import { SourceRegistry } from '@loomproxy/source-kit'
 import { SourceHost } from '@loomproxy/source-host'
 import { buildServer } from '@loomproxy/api'
@@ -56,6 +58,7 @@ export type Composed = {
   nameCache: DbNameCache
   schedules: DbSchedules
   kv: DbKv
+  pools: ReturnType<typeof createPoolRuntime>
   quotaExtra: DbQuotaExtra
   sourceGroups: DbSourceGroups
 }
@@ -155,10 +158,17 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
   })
   const upstream = new Upstream({ config, logger: logger.child('upstream'), cache: upstreamCache })
   const registry = new SourceRegistry()
+  // 池运行时：设备表由 store 实现（DeviceStore 端口声明在 contract），启停由装配层负责
+  const pools = createPoolRuntime({
+    store: new DbPoolDevices(db),
+    logger: logger.child('pool'),
+    enabled: env['POOL_ENABLED'] === undefined ? true : !['0', 'false', 'off', 'no'].includes(String(env['POOL_ENABLED']).toLowerCase()),
+  })
   const host = new SourceHost({
     pluginDir: config.pluginDir,
     logger: logger.child('host'),
     registry,
+    pools,
     settings,
     dataSources,
     upstream,
@@ -174,6 +184,9 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
     }
   }
   logger.info(`插件扫描完成：${infos.length} 个（active=${infos.filter((i) => i.state === 'active').length}）`)
+
+  // 插件加载完再启动池（源的池声明在加载时登记，启动要等所有人就位）
+  await pools.startAll()
 
   const app = buildServer({
     config,
@@ -195,8 +208,9 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
     nameCache,
     schedules,
     kv,
+    pools,
     quotaExtra,
     sourceGroups,
   })
-  return { config, app, db, host, registry, settings, dataSources, users, roles, plans, sessions, apiKeys, callLogs, quota, sourceConfigs, blockedIPs, devices, nameCache, schedules, kv, quotaExtra, sourceGroups }
+  return { config, app, db, host, registry, settings, dataSources, users, roles, plans, sessions, apiKeys, callLogs, quota, sourceConfigs, blockedIPs, devices, nameCache, schedules, kv, pools, quotaExtra, sourceGroups }
 }

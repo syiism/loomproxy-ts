@@ -15,8 +15,15 @@ import {
 import type { DataSourceStore, SettingsStore } from '@loomproxy/store'
 import { compareVersion, describeVersion, listVersions, sdkCompatible } from './manifest.ts'
 
+export type PoolSink = {
+  register(name: string, entry: { provider: import('@loomproxy/contract').PoolProvider; config?: Partial<import('@loomproxy/contract').PoolConfig> }): unknown
+  unregister(name: string): Promise<void>
+}
+
 export type HostDeps = {
   pluginDir: string
+  /** 池注册表（可选）：源声明了 pool 就登记进去，装配层负责启停 */
+  pools?: PoolSink
   logger: Logger
   registry: SourceRegistry
   settings: SettingsStore
@@ -193,6 +200,14 @@ export class SourceHost {
       ...(desc.manifest.params ? { params: desc.manifest.params } : {}),
       def,
     })
+    // 池声明：登记到装配层的注册表（源包不认识宿主，只声明；启停由 compose/main 做）
+    if (def.pool) {
+      if (!this.deps.pools) throw new Error('源声明了 pool，但装配层没有提供池注册表')
+      this.deps.pools.register(def.pool.name, {
+        provider: def.pool.provider,
+        ...(def.pool.config ? { config: def.pool.config } : {}),
+      })
+    }
     this.loaded.set(code, { code, version, dir: desc.dir, entry: desc.entry, manifest: desc.manifest })
     this.failures.delete(code)
     this.deps.logger.info(`插件 ${code}@${version} 已生效（generation=${this.registry.generation}）`)
@@ -271,7 +286,9 @@ export class SourceHost {
   /** 卸载：摘注册表（等价 Go 版"摘导入 + 重启"，但不用重启） */
   async unload(code: string): Promise<void> {
     const cur = this.registry.get(code)
+    const poolName = cur?.def.pool?.name
     this.registry.remove(code)
+    if (poolName) await this.deps.pools?.unregister(poolName)
     if (cur?.def.dispose) await cur.def.dispose()
     this.failures.delete(code)
   }

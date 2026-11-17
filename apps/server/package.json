@@ -9,6 +9,7 @@
     "@loomproxy/kernel": "workspace:*",
     "@loomproxy/source-host": "workspace:*",
     "@loomproxy/source-kit": "workspace:*",
-    "@loomproxy/store": "workspace:*"
+    "@loomproxy/store": "workspace:*",
+    "@loomproxy/pool": "workspace:*"
   }
 }
