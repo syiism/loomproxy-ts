@@ -6,7 +6,7 @@ import { ClientCanceled, isUpstreamError, newSubject } from '@loomproxy/contract
 import type { Config, Logger, Upstream } from '@loomproxy/kernel'
 import { Ledger, RateLimiter, accessMessage, contentKeyOf, sourceAccessVerdict } from '@loomproxy/gate'
 import { createFetchFacade, observeCall, stampSearchSource } from '@loomproxy/source-kit'
-import type { CallLogStore, DataSourceStore, SettingsStore } from '@loomproxy/store'
+import type { ApiKeyStore, CallLogStore, DataSourceStore, SessionStore, SettingsStore } from '@loomproxy/store'
 import type { SourceHost } from '@loomproxy/source-host'
 import { resolveIdentity } from './auth.ts'
 import { trackCall } from './calls.ts'
@@ -30,6 +30,9 @@ export type DispatchDeps = {
   limiter: RateLimiter
   /** 明细写入口：与平台其余部分同一条（出口 hook 记，不在 handler 里记） */
   callLogs?: CallLogStore
+  /** 会话与账号密钥：有它们才做"撤销即刻失效/密钥认出归属" */
+  sessions?: SessionStore
+  apiKeys?: ApiKeyStore
 }
 
 function sanitizeMessage(msg: string): string {
@@ -47,7 +50,10 @@ export function createDispatcher(deps: DispatchDeps) {
       return
     }
     const { entry, handler } = resolved
-    const identity = resolveIdentity(req, deps.config)
+    const identity = await resolveIdentity(req, deps.config, {
+      ...(deps.sessions ? { sessions: deps.sessions } : {}),
+      ...(deps.apiKeys ? { apiKeys: deps.apiKeys } : {}),
+    })
     // 明细的请求级上下文：出口 hook 用它记账（含 400/403/429/5xx，与 Go 的 monitor 同口径）
     const subject = newSubject()
     trackCall(req, {

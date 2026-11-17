@@ -3,7 +3,16 @@
 // 这样 400/403/429/5xx 都进明细——把手写在 handler 里就会漏掉中间件拒绝的那些。
 import Fastify, { type FastifyInstance } from 'fastify'
 import type { Config, Logger, Upstream } from '@loomproxy/kernel'
-import type { CallLogStore, DataSourceStore, SettingsStore, UserStore } from '@loomproxy/store'
+import type {
+  ApiKeyStore,
+  CallLogStore,
+  DataSourceStore,
+  PlanStore,
+  RoleStore,
+  SessionStore,
+  SettingsStore,
+} from '@loomproxy/store'
+import type { DbUsers } from '@loomproxy/store'
 import type { SourceHost } from '@loomproxy/source-host'
 import { Ledger, RateLimiter } from '@loomproxy/gate'
 import { callMetaOf, toCallLogRow } from './calls.ts'
@@ -18,7 +27,11 @@ export type ApiDeps = {
   host: SourceHost
   dataSources: DataSourceStore
   settings: SettingsStore
-  users?: UserStore
+  users?: DbUsers
+  roles?: RoleStore
+  plans?: PlanStore
+  sessions?: SessionStore
+  apiKeys?: ApiKeyStore
   callLogs?: CallLogStore
   ledger?: Ledger
   limiter?: RateLimiter
@@ -49,8 +62,13 @@ export function buildServer(deps: ApiDeps): FastifyInstance {
     config: deps.config,
     host: deps.host,
     dataSources: deps.dataSources,
-    users: deps.users,
-    callLogs: deps.callLogs,
+    ...(deps.users ? { users: deps.users } : {}),
+    ...(deps.roles ? { roles: deps.roles } : {}),
+    ...(deps.plans ? { plans: deps.plans } : {}),
+    ...(deps.sessions ? { sessions: deps.sessions } : {}),
+    ...(deps.apiKeys ? { apiKeys: deps.apiKeys } : {}),
+    ...(deps.settings ? { settings: deps.settings } : {}),
+    ...(deps.callLogs ? { callLogs: deps.callLogs } : {}),
   })
   registerWebRoutes(app, { webDir: deps.config.webDist, logger: deps.logger })
 
@@ -64,6 +82,8 @@ export function buildServer(deps: ApiDeps): FastifyInstance {
     ledger: deps.ledger ?? new Ledger(),
     limiter: deps.limiter ?? new RateLimiter(),
     ...(deps.callLogs ? { callLogs: deps.callLogs } : {}),
+    ...(deps.sessions ? { sessions: deps.sessions } : {}),
+    ...(deps.apiKeys ? { apiKeys: deps.apiKeys } : {}),
   })
 
   // catch-all：新插件加载完立刻可用，不需要 removeRoute/addRoute

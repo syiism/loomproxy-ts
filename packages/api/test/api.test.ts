@@ -5,7 +5,18 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadConfig, silentLogger, Upstream } from '@loomproxy/kernel'
 import { SourceRegistry } from '@loomproxy/source-kit'
-import { EnvAdminUser, InMemoryCallLogs, InMemoryDataSources, InMemorySettings } from '@loomproxy/store'
+import {
+  DbApiKeys,
+  DbCallLogs,
+  DbDataSources,
+  DbPlans,
+  DbRoles,
+  DbSessions,
+  DbSettings,
+  DbUsers,
+  InMemorySettings,
+  SqliteDb,
+} from '@loomproxy/store'
 import { SourceHost } from '@loomproxy/source-host'
 import { buildServer, signToken } from '../src/index.ts'
 import { RateLimiter } from '@loomproxy/gate'
@@ -51,8 +62,10 @@ async function makeApp() {
   const config = loadConfig({ JWT_SECRET: SECRET, DATA_DIR: join(root, 'data'), PLUGIN_DIR: join(root, 'plugins') })
   const logger = silentLogger()
   const registry = new SourceRegistry()
-  const settings = new InMemorySettings()
-  const dataSources = new InMemoryDataSources()
+  const db = new SqliteDb(':memory:')
+  db.migrate()
+  const settings = new DbSettings(db)
+  const dataSources = new DbDataSources(db)
   const upstream = new Upstream({ config, logger })
   const host = new SourceHost({
     pluginDir: config.pluginDir,
@@ -67,10 +80,27 @@ async function makeApp() {
   // 每个请求把时钟推进 5s：本用例要验的是派发形状，不是限流
   let tick = 0
   const limiter = new RateLimiter(() => 1_000_000 + tick++ * 5_000)
-  const users = new EnvAdminUser('admin', 'secret-pass')
-  const callLogs = new InMemoryCallLogs({ max: 100 })
-  const app = buildServer({ config, logger, upstream, host, dataSources, settings, limiter, users, callLogs })
-  return { app, root, config, host, callLogs }
+  // 真实 SQLite（:memory:）+ 播种：路由要的是 DbUsers 这一组，用内存替身测不到 join/角色
+  const users = new DbUsers(db)
+  const roles = new DbRoles(db)
+  const plans = new DbPlans(db)
+  const sessions = new DbSessions(db)
+  const apiKeys = new DbApiKeys(db)
+  const callLogs = new DbCallLogs(db)
+  for (const r of [
+    { code: 'admin', name: '管理员', description: '' },
+    { code: 'user', name: '用户', description: '' },
+  ]) {
+    roles.create(r)
+  }
+  const plan = plans.create({ name: '基础版', code: 'basic' })
+  users.create({ username: 'admin', password: 'secret-pass', planId: plan.id, roles: ['admin'] })
+  users.create({ username: 'u', password: 'u-pass', planId: plan.id, roles: ['user'] })
+  const app = buildServer({
+    config, logger, upstream, host, dataSources, settings, limiter,
+    users, roles, plans, sessions, apiKeys, callLogs,
+  })
+  return { app, root, config, host, callLogs, users }
 }
 
 const adminToken = () => signToken({ user_id: 1, username: 'admin', roles: ['admin'] }, SECRET)
@@ -252,10 +282,14 @@ test('登录：错密码 401，对密码拿到 token，/auth/me 认 token', asyn
 
     const ok = await app.inject({ method: 'POST', url: '/auth/login', payload: { username: 'admin', password: 'secret-pass' } })
     assert.equal(ok.statusCode, 200)
-    const body = ok.json() as { code: number; data: { token: string; expires_at: string; user: { username: string; roles: string[] } } }
+    const body = ok.json() as {
+      code: number
+      data: { token: string; expires_at: string; user: { username: string; roles: Array<{ code: string }> } }
+    }
     assert.equal(body.code, 0)
     assert.ok(body.data.token.split('.').length === 3)
-    assert.deepEqual(body.data.user.roles, ['admin'])
+    // 面板读 `r.code`（isAdmin() 就是这么判的），所以 roles 是对象数组
+    assert.equal(body.data.user.roles[0]?.code, 'admin')
 
     const me = await app.inject({ method: 'GET', url: '/auth/me', headers: { authorization: `Bearer ${body.data.token}` } })
     assert.equal(me.statusCode, 200)

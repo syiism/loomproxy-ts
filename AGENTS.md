@@ -54,15 +54,28 @@ PLUGIN_DIR=plugins node apps/server/src/main.ts          # ③ 起服务 → cur
 
 ## 5. 面板（web/）的规矩
 
-- 只调**后端已实现**的端点。后端没有的域（套餐/额度/卡密/用户…）不要先写页面或假按钮——
-  空壳页面会让人以为"功能有了只是没数据"。
-- `web/src/api/client.ts` 与 Go 版面板同一份契约：成功取 `payload.data`、`code !== 0` 抛错、401 清票跳登录。
+- **这份面板是原 Go 项目的 `web/` 原样搬入的**（不是重写）。改动只允许两种：
+  ① 补后端已实现端点的 api 方法；② 新增页面（要同时在 `api/index.js`、`main.js` 路由、
+  `App.vue` 的 `adminNavGroups` 三处登记——漏一处就是"页面在了但点不到"）。
+- 后端没有的域（额度/套餐限额/卡密/分组/定时/IP/设备/接口消耗）**页面保留、端点回 501**：
+  报错原样 toast，比空壳假数据诚实。**不要**为了让页面"绿"而回成功空响应。
+- `web/src/api/client.js` 与 Go 版同一份契约：成功取 `payload.data`、`code !== 0` 抛错、401 清票跳登录。
   这三条任意一条改动，面板里所有调用点一起坏。
 - 路径挂在 `/panel`（`vite base: '/panel/'` + router `createWebHistory('/panel')`），产物由
   `packages/api/src/web.ts` 托管（`/panel/*` 回退 index.html，`assets/` 长缓存，其余 no-cache）。
 - 改完必须 `pnpm run check:web`；`pnpm run check` 已经包含它。
 
-## 6. 写代码的约定
+## 6. 数据库（packages/store）
+
+- **只有这一层碰持久化**：其他层拿 `UserStore/SettingsStore/DataSourceStore/CallLogStore…` 接口。
+- 当前实现：`node:sqlite`（Node 内置）+ 手写 DDL（`sqlite.ts` 的 `SCHEMA`）。加表 = 在 SCHEMA 里
+  `CREATE TABLE IF NOT EXISTS` + 一个 Repo；**不要**在业务层拼 SQL。
+- `DB_PATH` 默认 `DATA_DIR/loomproxy.db`；用例用 `:memory:`。
+- 口令用 scrypt（`hashPassword/verifyPassword`）；会话是**现行校验**（JWT 带 jti，撤销即刻失效）。
+- 播种（角色/默认套餐/管理员/内置设置）在 `apps/server/src/compose.ts`，**幂等**：已存在的不覆盖。
+- 未接域一律 501 + 人话（`notWired()`），不要返回成功空响应。
+
+## 7. 写代码的约定
 
 - **凡是"一处事实"的东西只留一处**：分页夹（`kernel/paging`）、时区日界（`kernel/clock`）、
   设置类型（`contract` 的 `SETTING_TYPES`）、缓存键含"这条响应属于谁"。

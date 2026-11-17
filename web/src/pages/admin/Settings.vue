@@ -1,0 +1,512 @@
+<template>
+  <div>
+    <PageHeader title="系统设置" subtitle="站点运行时配置，按功能聚合为卡片；卡内保存只提交有改动的项。">
+      <template #actions>
+        <button class="btn-primary" @click="openCreate">新增配置</button>
+      </template>
+    </PageHeader>
+
+    <UiSpinner v-if="loading" />
+    <UiEmpty v-else-if="error" title="加载失败" :text="error" />
+    <UiEmpty v-else-if="list.length === 0" title="暂无设置项" />
+    <div v-else>
+      <!-- 瀑布流：卡片按列独立堆叠（CSS 多列），每卡 break-inside-avoid 防止被拆到两列 -->
+      <div class="columns-1 md:columns-2 gap-4 md:gap-6">
+
+      <!-- 功能卡片：内置键卡片在前，源声明设置项按声明源动态成卡在后 -->
+      <section v-for="g in ALL_GROUPS" :key="g.source || g.title" class="card reveal mb-4 md:mb-6 break-inside-avoid">
+        <div class="mb-5 pb-3 border-b border-border">
+          <div class="font-serif text-xl md:text-2xl font-medium tracking-tight">{{ g.title }}</div>
+          <div v-if="g.desc" class="text-xs text-text-muted mt-1.5">{{ g.desc }}</div>
+        </div>
+        <!-- 短字段（开关/下拉/数字/单行文本）双列并排，长字段（多行/JSON/密钥/只读源名单）跨整列：
+             原来每个字段都独占一行，「发码通道」这类 6 字段卡被拉得很长，两列并排后卡片高度明显收敛。 -->
+        <form @submit.prevent="saveGroup(g)" class="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
+          <template v-for="f in g.fields" :key="f.key">
+            <!-- 数据库中不存在的受管 key（如被误删）：置灰提示，经「新增配置」恢复 -->
+            <UiField v-if="!settingsMap[f.key]" :key="f.key + '-missing'" :label="f.label">
+              <input class="input font-mono" disabled :value="'未入库（用「新增配置」恢复 ' + f.key + '）'">
+            </UiField>
+            <UiField v-else :key="f.key" :label="f.label" :hint="settingsMap[f.key].description" :class="fieldSpan(f)">
+              <UiSwitch v-if="f.widget === 'switch'" v-model="form[f.key]" />
+              <select v-else-if="f.widget === 'select'" v-model="form[f.key]" class="input font-mono">
+                <option v-for="opt in f.options" :key="opt" :value="opt">{{ opt }}</option>
+              </select>
+              <textarea
+                v-else-if="f.widget === 'textarea'"
+                v-model="form[f.key]"
+                class="input font-mono leading-relaxed"
+                :rows="f.rows || 3"
+                :disabled="fieldDisabled(f)"
+              ></textarea>
+              <!-- 榜单可见性**只留一个编辑口**：数据源管理页的逐源开关。这里给只读摘要 + 跳转——
+                   同页再放一份「整份名单一次提交」的复选组就会与逐源增量互相覆盖（拿旧快照点保存
+                   会静默冲掉别处刚改的源），且候选只在打开那一刻取一次，新源不刷新就不出现（P17） -->
+              <div v-else-if="f.widget === 'sources_ro'" class="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <span class="text-sm">
+                  已放行 <span class="font-mono">{{ sourceList(f.key).length }}</span> 个源<span v-if="sourceList(f.key).length" class="text-text-muted">：{{ sourceNames(sourceList(f.key)) }}</span>
+                </span>
+                <button type="button" class="btn-ghost btn-sm" @click="$router.push('/admin/datasources')">到「数据源管理」逐源开关</button>
+              </div>
+              <div v-else-if="f.widget === 'secret'" class="min-w-0">
+                <textarea
+                  v-model="form[f.key]"
+                  class="input font-mono leading-relaxed"
+                  :rows="f.rows || 5"
+                  :disabled="fieldDisabled(f)"
+                  :placeholder="sensitive.has(f.key) ? '已设置（内容不回显）——留空保存则保持不变' : ''"
+                  spellcheck="false"
+                ></textarea>
+              </div>
+              <template v-else-if="f.widget === 'json'">
+                <textarea
+                  v-model="form[f.key]"
+                  class="input font-mono leading-relaxed"
+                  :rows="f.rows || 5"
+                  :disabled="fieldDisabled(f)"
+                  spellcheck="false"
+                  @blur="checkJson(f.key, jsonTypeOf(f.key) === 'json_object')"
+                ></textarea>
+                <div class="mt-2 flex items-center gap-2">
+                  <button type="button" class="btn-ghost btn-sm" :disabled="fieldDisabled(f)"
+                          @click="checkJson(f.key, jsonTypeOf(f.key) === 'json_object')">校验</button>
+                  <button type="button" class="btn-ghost btn-sm" :disabled="fieldDisabled(f)" @click="formatJson(f.key)">格式化</button>
+                  <span v-if="jsonState[f.key]" class="min-w-0 flex-1 truncate text-xs"
+                        :class="jsonState[f.key].ok ? 'text-pale-green-fg' : 'text-pale-red-fg'"
+                        :title="jsonState[f.key].msg">{{ jsonState[f.key].msg }}</span>
+                </div>
+              </template>
+              <input
+                v-else
+                v-model="form[f.key]"
+                :type="f.widget === 'number' ? 'number' : 'text'"
+                :min="f.min"
+                class="input font-mono"
+                :disabled="fieldDisabled(f)"
+              >
+            </UiField>
+          </template>
+
+          <div class="pt-4 border-t border-border flex items-center justify-between md:col-span-2">
+            <span class="text-xs text-text-muted">
+              {{ dirtyKeys(g).length > 0 ? `待保存 ${dirtyKeys(g).length} 项` : '无改动' }}
+            </span>
+            <button
+              type="submit"
+              class="btn-primary btn-sm"
+              :disabled="dirtyKeys(g).length === 0 || savingGroup === g.title"
+            >{{ savingGroup === g.title ? '保存中' : '保存' }}</button>
+          </div>
+        </form>
+      </section>
+      </div>
+
+      <!-- 自定义配置兜底卡：既不受功能卡管理、也不属于任何数据源的 key（后续版本新增、未识别） -->
+      <section v-if="customEntries.length > 0" class="card reveal mt-2">
+        <div class="mb-4">
+          <div class="font-serif text-lg font-medium tracking-tight">自定义配置</div>
+          <div class="text-xs text-text-muted mt-1">未被上方功能卡片或数据源卡片管理的设置项（含后续版本新增、未识别的 key）。</div>
+        </div>
+        <div class="divide-y divide-border">
+          <div v-for="s in customEntries" :key="s.key" class="flex flex-wrap items-center gap-3 md:gap-4 py-3 first:pt-0 last:pb-0">
+            <div class="min-w-0 flex-1">
+              <div class="font-mono text-xs break-all">{{ s.key }}</div>
+              <div class="mt-1 max-w-[480px] truncate text-xs text-text-muted" :title="s.description">{{ s.description || '—' }}</div>
+            </div>
+            <div class="shrink-0 max-w-[200px] truncate font-mono text-xs" :title="s.value">
+              <UiTag v-if="s.type === 'bool'" :tone="s.value === 'true' ? 'green' : 'red'" :label="s.value" />
+              <template v-else>{{ s.value }}</template>
+            </div>
+            <div class="shrink-0 flex gap-3">
+              <button @click="openEdit(s)" class="text-xs text-text-muted hover:text-text transition-colors">编辑</button>
+              <button v-if="!isProtected(s)" @click="deleteTarget = s" class="text-xs text-pale-red-fg hover:opacity-70 transition-opacity">删除</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- 新建配置 -->
+    <UiModal :open="createOpen" title="新增配置" @close="createOpen = false" @confirm="saveCreate" :confirm-loading="submitting">
+      <form @submit.prevent="saveCreate" class="space-y-5">
+        <UiField label="键" hint="创建后不可修改">
+          <input v-model="createForm.key" class="input font-mono" maxlength="64" required>
+        </UiField>
+        <UiField label="类型">
+          <select v-model="createForm.type" class="input">
+            <option value="string">string</option>
+            <option value="bool">bool</option>
+            <option value="number">number</option>
+            <option value="json">json</option>
+            <option value="json_object">json_object（字符串到字符串的对象）</option>
+          </select>
+        </UiField>
+        <UiField label="值">
+          <select v-if="createForm.type === 'bool'" v-model="createForm.value" class="input">
+            <option value="true">true</option>
+            <option value="false">false</option>
+          </select>
+          <textarea v-else-if="isJsonish(createForm.type)" v-model="createForm.value"
+                    class="input font-mono leading-relaxed" rows="4" spellcheck="false"></textarea>
+          <input v-else v-model="createForm.value" class="input font-mono" required>
+        </UiField>
+        <UiField label="说明">
+          <input v-model="createForm.description" class="input" maxlength="255">
+        </UiField>
+      </form>
+    </UiModal>
+
+    <!-- 编辑值（自定义配置） -->
+    <UiModal :open="!!editItem" :title="'编辑 ' + (editItem && editItem.key)" @close="editItem = null" @confirm="saveEdit" :confirm-loading="submitting">
+      <form v-if="editItem" @submit.prevent="saveEdit" class="space-y-5">
+        <UiField label="值">
+          <select v-if="editItem.type === 'bool'" v-model="editForm.value" class="input">
+            <option value="true">true</option>
+            <option value="false">false</option>
+          </select>
+          <textarea v-else-if="isJsonish(editItem.type)" v-model="editForm.value"
+                    class="input font-mono leading-relaxed" rows="5" spellcheck="false"></textarea>
+          <input v-else v-model="editForm.value" class="input font-mono" required>
+        </UiField>
+        <div v-if="editItem.description" class="text-xs text-text-muted">{{ editItem.description }}</div>
+      </form>
+    </UiModal>
+
+    <!-- 删除确认 -->
+    <UiModal :open="!!deleteTarget" title="删除配置" @close="deleteTarget = null" @confirm="confirmDelete">
+      <p class="text-text-muted text-sm">删除 <span class="font-mono">{{ deleteTarget && deleteTarget.key }}</span> 后，读取该配置的功能将回退到默认值。确定继续？</p>
+    </UiModal>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted, nextTick } from 'vue'
+import PageHeader from '../../components/PageHeader.vue'
+import UiModal from '../../components/UiModal.vue'
+import UiTag from '../../components/UiTag.vue'
+import UiField from '../../components/UiField.vue'
+import UiSwitch from '../../components/UiSwitch.vue'
+import UiSpinner from '../../components/UiSpinner.vue'
+import UiEmpty from '../../components/UiEmpty.vue'
+import { adminApi, miscApi } from '../../api/index.js'
+import { toast, revealObserve } from '../../utils.js'
+
+const PROTECTED = ['register_enabled', 'default_role', 'default_quota_plan']
+
+// 受管字段分组：渲染顺序即卡片顺序；field 的中文说明沿用后端 description，不在前端重复维护。
+// 源声明的设置项不在这里——它们由 sourceGroups 按「声明源」动态成卡（见下），骨架不硬编码任何源键。
+const GROUPS = [
+  {
+    title: '站点基础',
+    desc: '站点开关与对用户可见的公告。',
+    fields: [
+      { key: 'maintenance_mode', label: '维护模式', widget: 'switch' },
+      { key: 'announcement', label: '站内公告', widget: 'textarea', rows: 4 },
+    ],
+  },
+  {
+    title: '注册与登录',
+    desc: '新用户注册开关、邮箱域名白/黑名单、默认身份与登录 token 有效期。',
+    fields: [
+      { key: 'register_enabled', label: '允许注册', widget: 'switch' },
+      { key: 'email_domain_allowlist', label: '邮箱域名白名单', widget: 'textarea', rows: 2 },
+      { key: 'email_domain_blocklist', label: '邮箱域名黑名单', widget: 'textarea', rows: 2 },
+      { key: 'default_role', label: '新用户默认角色', widget: 'text' },
+      { key: 'default_quota_plan', label: '新用户默认套餐', widget: 'text' },
+      { key: 'jwt_expire_hours', label: 'Token 有效时长（小时）', widget: 'number' },
+    ],
+  },
+  {
+    title: '验证码',
+    desc: '场景化验证码策略：默认全部场景关闭，启用后注册/找回密码需携带验证码。',
+    fields: [
+      { key: 'verify_code_scenes', label: '启用场景', widget: 'text' },
+      { key: 'verify_send_interval_sec', label: '发送冷却（秒）', widget: 'number', min: 0 },
+      { key: 'verify_daily_send_limit', label: '每日发送上限', widget: 'number', min: 0 },
+      { key: 'verify_code_ttl_sec', label: '验证码有效期（秒）', widget: 'number', min: 0 },
+      { key: 'verify_code_max_attempts', label: '单码最大失败次数', widget: 'number', min: 0 },
+    ],
+  },
+  {
+    title: '发码通道',
+    desc: 'verify_provider 切换 mock / http；http 为通用模板适配器，绝大多数发码平台填配置即可对接。',
+    fields: [
+      { key: 'verify_provider', label: '通道', widget: 'select', options: ['mock', 'http'] },
+      { key: 'verify_http_url', label: '请求地址', widget: 'textarea', rows: 2, gate: 'providerHttp' },
+      { key: 'verify_http_method', label: '请求方法', widget: 'text', gate: 'providerHttp' },
+      { key: 'verify_http_headers', label: '请求头（JSON，不回显）', widget: 'secret', rows: 4, gate: 'providerHttp' },
+      { key: 'verify_http_body', label: '请求体模板（JSON）', widget: 'json', rows: 6, gate: 'providerHttp' },
+      { key: 'verify_http_success_keyword', label: '成功判定关键字', widget: 'text', gate: 'providerHttp' },
+    ],
+  },
+  {
+    title: '数据面',
+    desc: '对下游开放的数据面行为：榜单可见性与聚合搜索上限。',
+    fields: [
+      { key: 'rank_public_sources', label: '可见榜单的数据源', widget: 'sources_ro' },
+      { key: 'aggregate_max_sources', label: '聚合搜索上限（源数）', widget: 'number', min: 1 },
+    ],
+  },
+  {
+    title: '代理与 IP 防护',
+    desc: '上游代理池的作用范围与 IP 自动拉黑阈值。',
+    fields: [
+      { key: 'proxy_enabled_sources', label: '走代理的数据源', widget: 'text' },
+      { key: 'auto_block_enabled', label: 'IP 自动拉黑', widget: 'switch' },
+      { key: 'auto_block_threshold', label: '拉黑阈值（次）', widget: 'number', min: 1 },
+      { key: 'auto_block_window_sec', label: '统计窗口（秒）', widget: 'number', min: 1 },
+    ],
+  },
+  {
+    title: '设备与密钥监控',
+    desc: '多设备登录处置与设备/密钥异动标红（只标红，不自动踢人）。',
+    fields: [
+      { key: 'device_watch_enabled', label: '多设备监控', widget: 'switch' },
+      { key: 'max_active_sessions', label: '活跃会话上限', widget: 'number', min: 1 },
+      { key: 'device_watch_window_days', label: '统计窗口（天）', widget: 'number', min: 1 },
+      { key: 'suspect_distinct_ips', label: '标红阈值（不同 IP 数）', widget: 'number', min: 1 },
+    ],
+  },
+]
+
+const MANAGED_KEYS = new Set(GROUPS.flatMap(g => g.fields.map(f => f.key)))
+
+const loading = ref(true)
+const error = ref('')
+const list = ref([])
+const submitting = ref(false)
+const createOpen = ref(false)
+const createForm = ref({ key: '', type: 'string', value: '', description: '' })
+const editItem = ref(null)
+const editForm = ref({ value: '' })
+const deleteTarget = ref(null)
+
+// 卡片级编辑态：form 为当前值（switch 存布尔、其余存字符串），snapshot 为加载时的字符串原值
+const settingsMap = ref({})
+const sensitive = ref(new Set())
+const form = ref({})
+const snapshot = ref({})
+const savingGroup = ref('')
+
+const isProtected = (s) => PROTECTED.includes(s.key)
+
+// 源设置项的控件形态：按声明类型选 widget，敏感键走只写不回显的 secret
+const widgetForSetting = (s) => {
+  if (sensitive.value.has(s.key)) return 'secret'
+  switch (s.type) {
+    case 'bool': return 'switch'
+    case 'number': return 'number'
+    case 'json':
+    case 'json_object': return 'json'
+    default: return 'text'
+  }
+}
+
+// 源声明的设置项按「声明源」各成一卡：归属由后端 GET /admin/settings 的 source/source_display 下发，
+// 前端只按 source 字段分组、不硬编码任何源键（AGENTS §3）。字段名用原始键名。
+const sourceGroups = computed(() => {
+  const bySource = new Map()
+  for (const s of list.value) {
+    if (MANAGED_KEYS.has(s.key) || !s.source) continue
+    let g = bySource.get(s.source)
+    if (!g) {
+      g = { source: s.source, title: s.source_display || s.source, desc: `由数据源 ${s.source} 声明`, fields: [] }
+      bySource.set(s.source, g)
+    }
+    g.fields.push({ key: s.key, label: s.key, widget: widgetForSetting(s) })
+  }
+  return [...bySource.values()]
+})
+
+// 渲染顺序：内置功能卡在前，源卡按声明源在后
+const ALL_GROUPS = computed(() => [...GROUPS, ...sourceGroups.value])
+
+// 兜底卡：既不受功能卡管理、也不属于任何数据源的 key（后续版本新增、未识别）
+const customEntries = computed(() => list.value.filter(s => !MANAGED_KEYS.has(s.key) && !s.source))
+
+// gate: 'providerHttp' 表示仅 http 通道可编辑（mock 下置灰）
+const fieldDisabled = (f) => f.gate === 'providerHttp' && form.value.verify_provider === 'mock'
+
+// 长字段跨整列：多行文本 / JSON / 不回显密钥 / 只读源名单。短字段（开关、下拉、数字、单行文本）双列并排
+const WIDGET_WIDE = new Set(['textarea', 'secret', 'json', 'sources_ro'])
+const fieldSpan = (f) => (WIDGET_WIDE.has(f.widget) ? 'md:col-span-2' : '')
+
+// sources_ro widget：库里存的是逗号分隔名单，这里只读展示（编辑在数据源管理页，见 P17）
+const sourceChoices = ref([])
+const sourceList = (key) => String(form.value[key] ?? '').split(',').map(x => x.trim()).filter(Boolean)
+// 源码翻展示名；认不出的（停用/已删的源）原样带出源码而不是藏掉
+const sourceNames = (codes, max = 8) => {
+  const names = codes.map(c => {
+    const hit = sourceChoices.value.find(o => o.code === c)
+    return hit && hit.name && hit.name !== c ? hit.name : c
+  })
+  return names.length > max ? names.slice(0, max).join('、') + ` 等 ${names.length} 个` : names.join('、')
+}
+
+const loadSourceChoices = async () => {
+  try {
+    const list = await miscApi.datasources()
+    sourceChoices.value = (list || []).map(d => ({ code: d.id, name: d.name || d.id }))
+  } catch (e) { /* 拉不到候选时仍可手改库值，不阻塞设置页 */ }
+}
+
+// json widget：本地即时校验（后端同样会校验并压缩，这里只是让坏值当场可见）
+const jsonState = ref({})
+
+// 档位的事实来源是**库里那一行的 type**（面板不自己抄，同 P46 那句「档位数字由响应下发」）。
+const jsonTypeOf = (key) => settingsMap.value?.[key]?.type || ''
+const isJsonish = (t) => t === 'json' || t === 'json_object'
+const checkJson = (key, objectOfStrings = false) => {
+  const raw = String(form.value[key] ?? '').trim()
+  if (!raw) { jsonState.value = { ...jsonState.value, [key]: { ok: true, msg: '空值合法（该能力未启用）' } }; return true }
+  try {
+    const parsed = JSON.parse(raw)
+    // `json_object` 比「合法 JSON」多一道形状要求，判据与后端 `normalizeJSONObjectValue`、
+    // 与**消费方**（发送端的 map[string]string）同一份（P94）。本地先过一遍，省一次"整卡只有这一项被拒"的往返。
+    if (objectOfStrings && !(parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        && Object.values(parsed).every(v => typeof v === 'string'))) {
+      jsonState.value = { ...jsonState.value, [key]: { ok: false, msg: '必须是「字符串到字符串的对象」：数组、裸字符串、值写成数字/嵌套都会让发送端拿不到请求头' } }
+      return false
+    }
+    const compact = JSON.stringify(parsed)
+    jsonState.value = { ...jsonState.value, [key]: { ok: true, msg: `合法 JSON（保存时压缩为单行 ${compact.length} 字节）` } }
+    return true
+  } catch (e) {
+    jsonState.value = { ...jsonState.value, [key]: { ok: false, msg: '非法 JSON：' + e.message } }
+    return false
+  }
+}
+
+const formatJson = (key) => {
+  const raw = String(form.value[key] ?? '').trim()
+  if (!raw) return
+  try {
+    form.value[key] = JSON.stringify(JSON.parse(raw), null, 2)
+    checkJson(key)
+  } catch (e) {
+    jsonState.value = { ...jsonState.value, [key]: { ok: false, msg: '无法格式化：' + e.message } }
+  }
+}
+
+// 表单值 → 落库字符串（bool 转 'true'/'false'，文本 trim）
+const serialize = (v) => (typeof v === 'boolean' ? String(v) : String(v ?? '').trim())
+
+const dirtyKeys = (g) => g.fields.filter(f => settingsMap.value[f.key] && serialize(form.value[f.key]) !== snapshot.value[f.key]).map(f => f.key)
+
+const load = async () => {
+  loading.value = true
+  error.value = ''
+  try {
+    const resp = (await adminApi.listSettings()) || {}
+    list.value = resp.items || []
+    sensitive.value = new Set(resp.sensitive_keys || [])
+    const map = {}
+    const f = {}
+    const snap = {}
+    for (const s of list.value) {
+      map[s.key] = s
+      // 受管键与源声明键都要进表单态（源键由 sourceGroups 渲染，缺了会控件无值、diff 失效）
+      if (MANAGED_KEYS.has(s.key) || s.source) {
+        // 敏感键（P62）只写不回显：控件永远空着，保存留空 = 后端保持原值
+        const masked = sensitive.value.has(s.key)
+        f[s.key] = masked ? '' : (s.type === 'bool' ? s.value === 'true' : s.value)
+        snap[s.key] = masked ? '' : s.value
+      }
+    }
+    settingsMap.value = map
+    form.value = f
+    snapshot.value = snap
+    jsonState.value = {}
+  } catch (e) {
+    error.value = e.message
+  }
+  loading.value = false
+  nextTick(revealObserve)
+}
+
+// 卡片级保存：只提交该卡有改动的 key（后端逐 key PUT，空值合法）
+const saveGroup = async (g) => {
+  if (savingGroup.value) return
+  const changes = g.fields.filter(f => settingsMap.value[f.key] && serialize(form.value[f.key]) !== snapshot.value[f.key])
+    // 敏感键（P62）：留空 = 保持原值，不发 PUT（后端同口径兜底）
+    .filter(f => !(sensitive.value.has(f.key) && !String(form.value[f.key] || '').trim()))
+  if (changes.length === 0) return
+  // JSON 型先本地过一遍：坏值不发请求，免得整卡只有这一项被后端拒掉后界面与库对不上
+  for (const f of changes) {
+    const t = jsonTypeOf(f.key)
+    if (isJsonish(t) && !checkJson(f.key, t === 'json_object')) {
+      toast(`「${f.label}」${t === 'json_object' ? '不是字符串到字符串的 JSON 对象' : '不是合法 JSON'}，已取消保存`, 'error')
+      return
+    }
+  }
+  savingGroup.value = g.title
+  try {
+    for (const f of changes) {
+      const res = await adminApi.updateSetting(f.key, serialize(form.value[f.key]))
+      // 后端对 JSON 型会压缩落库：回填压缩值，界面显示的即为库里的实际内容
+      if (isJsonish(jsonTypeOf(f.key)) && res && typeof res.value === 'string') form.value[f.key] = res.value
+    }
+    for (const f of changes) {
+      snapshot.value[f.key] = serialize(form.value[f.key])
+    }
+    toast(`已保存 ${changes.length} 项配置`, 'success')
+  } catch (e) {
+    toast(e.message, 'error')
+    // 逐 key 提交中途失败可能部分已保存：重新拉取对齐界面与库
+    load()
+  } finally {
+    savingGroup.value = ''
+  }
+}
+
+const openCreate = () => {
+  createForm.value = { key: '', type: 'string', value: '', description: '' }
+  createOpen.value = true
+}
+
+const saveCreate = async () => {
+  if (submitting.value) return
+  submitting.value = true
+  try {
+    await adminApi.createSetting({
+      key: createForm.value.key.trim(),
+      value: createForm.value.value,
+      type: createForm.value.type,
+      description: createForm.value.description.trim(),
+    })
+    toast('配置已创建', 'success')
+    createOpen.value = false
+    load()
+  } catch (e) { toast(e.message, 'error') } finally { submitting.value = false }
+}
+
+const openEdit = (s) => {
+  editItem.value = s
+  editForm.value = { value: s.value }
+}
+
+const saveEdit = async () => {
+  if (submitting.value) return
+  submitting.value = true
+  try {
+    await adminApi.updateSetting(editItem.value.key, editForm.value.value)
+    toast('已更新', 'success')
+    editItem.value = null
+    load()
+  } catch (e) { toast(e.message, 'error') } finally { submitting.value = false }
+}
+
+const confirmDelete = async () => {
+  if (submitting.value) return
+  submitting.value = true
+  try {
+    await adminApi.deleteSetting(deleteTarget.value.key)
+    toast('已删除', 'success')
+    deleteTarget.value = null
+    load()
+  } catch (e) { toast(e.message, 'error') } finally { submitting.value = false }
+}
+
+onMounted(() => { load(); loadSourceChoices(); revealObserve() })
+load()
+</script>

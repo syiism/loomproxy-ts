@@ -1,12 +1,28 @@
 <!doctype html>
 <html lang="zh-CN">
   <head>
-    <meta charset="UTF-8" />
+    <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>LoomProxy · 面板</title>
+    <title>LoomProxy Console</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Geist+Mono&family=Geist:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="icon" href="/favicon.svg" />
+    <script>
+      // 首屏防闪烁：在样式加载前就按用户记忆/系统偏好设好 data-theme，避免白屏闪一下再变暗
+      (function () {
+        try {
+          var t = localStorage.getItem('theme')
+          if (t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+            document.documentElement.setAttribute('data-theme', 'dark')
+          }
+        } catch (e) {}
+      })()
+    </script>
   </head>
-  <body>
+  <body class="bg-bg text-text">
     <div id="app"></div>
-    <script type="module" src="/src/main.ts"></script>
+    <div id="toast" class="fixed top-4 left-4 right-4 sm:top-6 sm:right-6 sm:left-auto z-50 flex flex-col gap-2 max-w-[calc(100vw-2rem)]"></div>
+    <script type="module" src="/src/main.js"></script>
   </body>
 </html>

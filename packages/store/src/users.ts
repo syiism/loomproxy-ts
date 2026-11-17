@@ -2,13 +2,17 @@
 // 用户表/角色表/多租户是后续工作，接口先定成"按凭证换出一个身份视图"，接库时只换实现。
 import { timingSafeEqual } from 'node:crypto'
 
+/** 角色视图：面板认 `r.code`（isAdmin() 就是这么判的），所以这里给对象而不是字符串。 */
+export type RoleView = { id: number; code: string; name: string; description: string }
+export type PlanView = { id: number; name: string; code: string; description: string }
+
 export type SessionUser = {
   id: number
   username: string
   nickname: string
   email: string
   status: number
-  roles: string[]
+  roles: RoleView[]
 }
 
 export interface UserStore {
@@ -32,7 +36,7 @@ export class EnvAdminUser implements UserStore {
       nickname: this.username,
       email: '',
       status: 1,
-      roles: ['admin'],
+      roles: [{ id: 1, code: 'admin', name: '管理员', description: '' }],
     }
   }
 

@@ -29,7 +29,7 @@
 |---|---|---|---|
 | L0 | `@loomproxy/contract` | 线上形状 + 声明位 + 枚举 + zod schema（**纯类型，零 IO**） | `zod` |
 | L1 | `@loomproxy/kernel` | 运行时原语：配置、日志、时钟/时区、缓存、singleflight、错误类、取数栈（undici + 熔断 + 代理池）、worker 池 | L0、node 内置、`undici` |
-| L2 | `@loomproxy/store` | 持久化：drizzle schema/迁移、settings 读写、池表、明细表、聚合归档 | L0、L1、`drizzle-orm`、`better-sqlite3` |
+| L2 | `@loomproxy/store` | 持久化：SQLite（`node:sqlite`）+ 手写 DDL、settings/用户/会话/密钥/数据源/明细/聚合 | L0、L1 |
 | L2′ | `@loomproxy/source-kit` | 源作者适配层：登记表、legado DTO 构造/校验、取数门面、声明位校验、观测回填、`defineSource()`，以及**插件 manifest schema** | L0、L1（**不依赖 store**） |
 | L3 | `@loomproxy/gate` | 治理：access / billing / ratelimit / dedupe / plan / transfer / identity | L0、L1、L2 |
 | L3 | `@loomproxy/source-host` | 插件宿主：目录扫描、manifest 校验、`import()` 换代、蓝绿 drain、运行期声明落地、注册表、worker RPC、回滚 | L0、L1、L2、L2′ |
@@ -115,7 +115,7 @@
 | `base/*.go`（BaseHandler、registry、fetch、circuit、proxy、media、subject） | 拆两处：**取数/熔断/代理 → L1**；**registry/声明位/legado DTO/observe → L2′** | 这是本次拆分里最关键的一刀 |
 | `base/legado/*` | L2′ `source-kit/src/legado/` | DTO + 五动作基类 + 观测回填 |
 | `base/pool/*` | L2′ `source-kit/src/pool/`（状态机）+ L2 的 `DeviceStore` 实现 | 见 §4 第 2 行 |
-| `db/` | L2 `store/src/` | drizzle schema、迁移、seed、setting、readlog |
+| `db/` | L2 `store/src/` | `sqlite.ts`（DDL/迁移）+ `db-repos*.ts`（users/roles/plans/sessions/keys/settings/data_sources/call_logs）；seed 在 `apps/server/src/compose.ts` |
 | `gate/` | L3 `gate/src/` | access/billing/ratelimit/dedupe/plan/transfer |
 | `middleware/` | L1 的 `transport` 四条（requestid/recovery/logging/cors/cachecontrol）+ L3/L4′（apiauth/ipblock/baseurl/reqparams 属 api，access/billing/ratelimit 属 gate） | 链顺序常量放 L4′ `api/src/chain/order.ts` |
 | `handlers/admin|apikey|auth|catalog|quota|rank|subjectrank|userconfig|verify/` | L4′ `api/src/routes/*/` | 面板契约 ① §6 |

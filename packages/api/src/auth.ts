@@ -1,7 +1,7 @@
 // 鉴权四形态（迁移-TS-1 §3）：Bearer / ?token= / Cookie / API Key。
 // JWT 用 HMAC-SHA256 校验（与 Go 版同算法）；会话/密钥表落库属于 store 的后续工作，
 // 当前环境静态键（API_KEYS）可用，账号级密钥与用户会话留待 store 接入。
-import { createHmac, timingSafeEqual } from 'node:crypto'
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import type { FastifyRequest } from 'fastify'
 import type { Config } from '@loomproxy/kernel'
 
@@ -15,7 +15,13 @@ export type Identity = {
 
 export const ANONYMOUS: Identity = { roles: [], envKey: false }
 
-type Claims = { user_id?: number; username?: string; roles?: string[]; exp?: number }
+type Claims = { user_id?: number; username?: string; roles?: string[]; exp?: number; jti?: string }
+
+/** 身份解析需要的存储（会话吊销要现行查库：撤销之后旧票必须立刻失效） */
+export type IdentityDeps = {
+  sessions?: { isActive(jti: string): boolean }
+  apiKeys?: { ownerOf(key: string): { user_id: number } | undefined }
+}
 
 function b64url(data: Buffer | string): string {
   return Buffer.from(data).toString('base64url')
@@ -28,7 +34,7 @@ export function signToken(claims: Claims, secret: string): string {
   return `${header}.${payload}.${sig}`
 }
 
-function verifyToken(token: string, secret: string): Claims | undefined {
+export function verifyToken(token: string, secret: string): Claims | undefined {
   const parts = token.split('.')
   if (parts.length !== 3) return undefined
   const [header, payload, sig] = parts as [string, string, string]
@@ -69,36 +75,48 @@ export function apiKeyFromRequest(req: FastifyRequest): string {
   return ''
 }
 
-/** 尽力解析（对应 VerifyAuth）：解析不出来就是匿名，不在此处拒绝 */
-export function resolveIdentity(req: FastifyRequest, cfg: Config): Identity {
+/**
+ * 尽力解析（对应 VerifyAuth）：解析不出来就是匿名，不在此处拒绝。
+ * 传了 IdentityDeps 时多两道现行校验：会话被撤销/账号被禁用 → 票作废；账号 API Key 认出归属用户。
+ */
+export async function resolveIdentity(req: FastifyRequest, cfg: Config, deps: IdentityDeps = {}): Promise<Identity> {
   const token = tokenFromRequest(req)
   if (token) {
     const claims = verifyToken(token, cfg.jwtSecret)
     if (claims) {
-      return {
-        ...(claims.user_id !== undefined ? { userId: claims.user_id } : {}),
-        ...(claims.username ? { username: claims.username } : {}),
-        roles: claims.roles ?? [],
-        envKey: false,
+      const revoked = claims.jti !== undefined && deps.sessions !== undefined && !deps.sessions.isActive(claims.jti)
+      if (!revoked) {
+        return {
+          ...(claims.user_id !== undefined ? { userId: claims.user_id } : {}),
+          ...(claims.username ? { username: claims.username } : {}),
+          roles: claims.roles ?? [],
+          envKey: false,
+        }
       }
     }
   }
   const key = apiKeyFromRequest(req)
-  if (key && cfg.apiKeys.includes(key)) return { roles: [], envKey: true }
+  if (key) {
+    // env 静态键：匿名凭证（控制面要拒绝它，数据面放行）
+    if (cfg.apiKeys.includes(key)) return { roles: [], envKey: true }
+    const owner = deps.apiKeys?.ownerOf(key)
+    if (owner) return { userId: owner.user_id, roles: [], envKey: false }
+  }
   return ANONYMOUS
 }
 
 /** 登录换 token：claims 里必须有 user_id/roles，面板与数据面都靠它 */
-export function issueToken(user: { id: number; username: string; roles: string[] }, cfg: Config): {
-  token: string
-  expires_at: string
-} {
+export function issueToken(
+  user: { id: number; username: string; roles: string[] },
+  cfg: Config,
+  jti: string = randomBytes(9).toString('base64url'),
+): { token: string; expires_at: string; jti: string } {
   const expSec = Math.floor(Date.now() / 1000) + cfg.jwtExpireHours * 3600
   const token = signToken(
-    { user_id: user.id, username: user.username, roles: user.roles, exp: expSec },
+    { user_id: user.id, username: user.username, roles: user.roles, exp: expSec, jti },
     cfg.jwtSecret,
   )
-  return { token, expires_at: new Date(expSec * 1000).toISOString() }
+  return { token, expires_at: new Date(expSec * 1000).toISOString(), jti }
 }
 
 export function isWhitelisted(path: string, cfg: Config): boolean {
