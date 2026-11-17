@@ -77,6 +77,7 @@ export function createDispatcher(deps: DispatchDeps) {
     const identity = await resolveIdentity(req, deps.config, {
       ...(deps.sessions ? { sessions: deps.sessions } : {}),
       ...(deps.apiKeys ? { apiKeys: deps.apiKeys } : {}),
+      ...(deps.users ? { users: deps.users } : {}),
     })
     // 明细的请求级上下文：出口 hook 用它记账（含 400/403/429/5xx，与 Go 的 monitor 同口径）
     const subject = newSubject()

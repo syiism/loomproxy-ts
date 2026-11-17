@@ -13,6 +13,7 @@ async function identityOf(req: FastifyRequest, deps: Deps) {
   return resolveIdentity(req, deps.config, {
     ...(deps.stores.sessions ? { sessions: deps.stores.sessions } : {}),
     ...(deps.stores.apiKeys ? { apiKeys: deps.stores.apiKeys } : {}),
+    ...(deps.stores.users ? { users: deps.stores.users } : {}),
   })
 }
 
@@ -72,8 +73,8 @@ export function registerAuthRoutes(app: FastifyInstance, deps: Deps): void {
       reply.code(403).send(fail(config.errorCode, '账号已被禁用'))
       return
     }
-    const roles = hit.user.roles.map((r) => r.code)
-    const { token, expires_at, jti } = issueToken({ id: hit.user.id, username: hit.user.username, roles }, config)
+    // 角色不写进 token（Go 版同口径）：每次请求从库里读，改完立刻生效
+    const { token, expires_at, jti } = issueToken({ id: hit.user.id, username: hit.user.username }, config)
     stores.sessions?.create(hit.user.id, jti, expires_at, req.ip, String(req.headers['user-agent'] ?? ''))
     users.touchLogin(hit.user.id)
     return ok({ token, expires_at, user: hit.user })

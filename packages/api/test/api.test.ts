@@ -110,7 +110,7 @@ async function makeApp() {
     config, logger, upstream, host, dataSources, settings, limiter,
     users, roles, plans, sessions, apiKeys, callLogs, quota, quotaExtra, sourceGroups, blockedIPs, devices,
   })
-  return { app, root, config, host, callLogs, users, quota, plans, quotaExtra, blockedIPs, dataSources }
+  return { app, root, config, host, callLogs, users, quota, plans, quotaExtra, blockedIPs, dataSources, sessions, apiKeys, roles }
 }
 
 const adminToken = () => signToken({ user_id: 1, username: 'admin', roles: ['admin'] }, SECRET)
@@ -473,6 +473,39 @@ test('额度转移：两个已授权源之间重排日限额，流水一行、�
 
     const cleared = await app.inject({ method: 'DELETE', url: '/quota/transfers', headers: { authorization: `Bearer ${userToken()}` } })
     assert.equal((cleared.json() as { data: { cleared: number } }).data.cleared, 1)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('JWT 互认：Go 形状的票（uid/username + jti，无 roles/exp）在本仓可用', async () => {
+  const { app, root, sessions } = await makeApp()
+  try {
+    // Go 版 utils/jwt.go 的 JWTClaims：uid + username + jti/iat/iss/sub，**没有 roles、-1 时没有 exp**
+    const goToken = signToken(
+      { uid: 1, username: 'syiism', iss: 'loomproxy', sub: 'user', iat: Math.floor(Date.now() / 1000), jti: 'go-jti' },
+      SECRET,
+    )
+
+    // 本库没有这张 jti ⇒ 视为跨版本签发的外来票，按签名放行
+    const me = await app.inject({ method: 'GET', url: '/auth/me', headers: { authorization: `Bearer ${goToken}` } })
+    assert.equal(me.statusCode, 200)
+    const view = (me.json() as { data: { id: number; username: string; roles: Array<{ code: string }> } }).data
+    assert.equal(view.id, 1)
+    assert.equal(view.username, 'admin', '用户名以库为准（token 里那个只是签发时的快照）')
+    assert.equal(view.roles[0]?.code, 'admin', '角色从库里读（Go 的票里没有 roles）')
+
+    // 管理员端点也认
+    const stats = await app.inject({ method: 'GET', url: '/admin/stats', headers: { authorization: `Bearer ${goToken}` } })
+    assert.equal(stats.statusCode, 200)
+
+    // 本库有的 jti 被撤销 ⇒ 立刻失效（外来票放行不能变成"撤销无效"）
+    sessions.create(1, 'own-jti', new Date(Date.now() + 3600_000).toISOString(), '127.0.0.1', 'test')
+    const own = signToken({ uid: 1, username: 'admin', jti: 'own-jti' }, SECRET)
+    assert.equal((await app.inject({ method: 'GET', url: '/auth/me', headers: { authorization: `Bearer ${own}` } })).statusCode, 200)
+    sessions.revoke('own-jti')
+    assert.equal((await app.inject({ method: 'GET', url: '/auth/me', headers: { authorization: `Bearer ${own}` } })).statusCode, 401)
   } finally {
     await app.close()
     rmSync(root, { recursive: true, force: true })

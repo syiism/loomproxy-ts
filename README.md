@@ -93,6 +93,16 @@ Node 24 直接跑 `.ts`（type stripping），所以**用例不需要构建**；
 | `FQ_SESSION_POOL` | `DATA_DIR/_runtime/fq_novel/fq-sessions.json` | 设备会话池。首次运行从协议树拷一份种子（5 台已注册设备）；**刻意不放 `DATA_DIR/fq_novel/`**，否则 `/data` 会把它当成静态字典列出来 |
 | `FQ_POOL_MAX` | `5` | 协议层自己的会话池上限 |
 
+## JWT 互认（与 Go 版同一个 `JWT_SECRET` 时）
+
+- **claims 同形**：`{uid, username, jti, iat, iss:"loomproxy", sub:"user", exp?}` —— 与本仓早期形状
+  `{user_id, username, roles}` 不同，读的时候两个都兜着（旧票不会一夜失效）。
+- **角色不进 token**：每次请求从库里读（Go 版同口径）。所以在面板改角色立刻生效，不用重新登录。
+- **`exp` 可缺省**：Go 的 `JWT_EXPIRE_HOURS=-1` 就是不写 `exp`；本仓同样接受"无 exp"的票。
+- **会话归属**：本库有这张 `jti` 就必须有效（撤销/禁用立刻失效）；本库没有（跨版本/跨库签发）按签名放行，
+  并记进审计日志的入口——**别把"外来票放行"理解成"撤销无效"**，本库的票照样一撤就废。
+- Cookie 名与 Go 版一致（`loomproxy_token`），`Authorization: Bearer`、`?token=`、Cookie 三种都认。
+
 ## 管理员口令（重启后 env 里的口令还算不算数）
 
 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 只在**创建**管理员时用；库里的哈希属于谁，由 `kv_state` 里

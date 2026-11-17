@@ -74,6 +74,8 @@ PLUGIN_DIR=plugins node apps/server/src/main.ts          # ③ 起服务 → cur
 - 口令用 scrypt（`hashPassword/verifyPassword`）；会话是**现行校验**（JWT 带 jti，撤销即刻失效）。
 - 播种（角色/默认套餐/管理员/内置设置）在 `apps/server/src/compose.ts`，**幂等**：已存在的不覆盖。
 - 未接域一律 501 + 人话（`notWired()`），不要返回成功空响应。
+- JWT claims 必须与 Go `utils/jwt.go` 同形（`uid`/`username` + jti/iat/iss/sub，`exp` 可缺省）；
+  **角色永远从库里读**，不要往 token 里塞 roles。外来 jti（本库没有）按签名放行，本库有的必须有效。
 - 管理员口令：`ADMIN_PASSWORD` 只用于**创建**；改密/重置后必须写 `kv_state` 的
   `admin_password_source:<名字>=panel`，否则下次重启会被 env 覆盖（或反过来让 env 永远不生效）。
 - `DATA_DIR`/`DB_PATH` 相对 cwd：启动日志必须打印解析后的库路径与管理员名，否则"换目录启动"会表现成"密码错"。

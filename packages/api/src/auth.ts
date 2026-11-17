@@ -15,12 +15,32 @@ export type Identity = {
 
 export const ANONYMOUS: Identity = { roles: [], envKey: false }
 
-type Claims = { user_id?: number; username?: string; roles?: string[]; exp?: number; jti?: string }
+/**
+ * JWT claims：**与 Go 版 utils/jwt.go 的 JWTClaims 同形**（uid/username + RegisteredClaims）。
+ * Go 侧只用 `uid`，从不把角色写进 token —— 角色每次从库里读，权限变更立刻生效、不用重新登录。
+ * `user_id`/`roles` 是本仓早期形状，读的时候继续兜着（不然旧票会一夜之间全失效）。
+ */
+type Claims = {
+  uid?: number
+  user_id?: number
+  username?: string
+  roles?: string[]
+  exp?: number
+  jti?: string
+  iss?: string
+  sub?: string
+  iat?: number
+}
+
+/** 登录态 Cookie 名：与 Go 版 utils/jwt.go 的 TokenCookieName 同一个字面量（互认） */
+export const TOKEN_COOKIE = 'loomproxy_token'
 
 /** 身份解析需要的存储（会话吊销要现行查库：撤销之后旧票必须立刻失效） */
 export type IdentityDeps = {
-  sessions?: { isActive(jti: string): boolean }
+  sessions?: { isActive(jti: string): boolean; exists?(jti: string): boolean }
   apiKeys?: { ownerOf(key: string): { user_id: number } | undefined }
+  /** 角色来源：token 里不带角色，每次从库里读（Go 版同口径） */
+  users?: { byId(id: number): { username: string; roles: Array<{ code: string }> } | undefined }
 }
 
 function b64url(data: Buffer | string): string {
@@ -61,7 +81,8 @@ export function tokenFromRequest(req: FastifyRequest): string {
   if (cookie) {
     for (const part of cookie.split(';')) {
       const [k, ...rest] = part.trim().split('=')
-      if (k === 'loomproxy_token') return rest.join('=')
+      // Go 版的 Cookie 名与早期本仓的名字都认：迁移期两边同时在线是常态
+      if (k === TOKEN_COOKIE || k === 'loomproxy_token') return rest.join('=')
     }
   }
   return ''
@@ -84,12 +105,22 @@ export async function resolveIdentity(req: FastifyRequest, cfg: Config, deps: Id
   if (token) {
     const claims = verifyToken(token, cfg.jwtSecret)
     if (claims) {
-      const revoked = claims.jti !== undefined && deps.sessions !== undefined && !deps.sessions.isActive(claims.jti)
+      // 票的归属：本库有这张 jti 就必须有效（撤销/禁用立即失效）；
+      // 本库没有（跨版本/跨库签发，例如同一套 JWT_SECRET 下的 Go 旧票）按"外来票"放行——签名本身仍是权威。
+      const known = claims.jti !== undefined && deps.sessions?.exists !== undefined ? deps.sessions.exists(claims.jti) : true
+      const revoked =
+        claims.jti !== undefined &&
+        deps.sessions !== undefined &&
+        (known ? !deps.sessions.isActive(claims.jti) : false)
+      const uid = claims.uid ?? claims.user_id
       if (!revoked) {
+        // 角色优先读库（Go 版 token 里根本没有 roles）；库不可用时才退回 token 里的旧字段
+        const fromDb = uid !== undefined ? deps.users?.byId(uid) : undefined
+        const roles = fromDb ? fromDb.roles.map((r) => r.code) : claims.roles ?? []
         return {
-          ...(claims.user_id !== undefined ? { userId: claims.user_id } : {}),
-          ...(claims.username ? { username: claims.username } : {}),
-          roles: claims.roles ?? [],
+          ...(uid !== undefined ? { userId: uid } : {}),
+          ...(fromDb?.username ?? claims.username ? { username: fromDb?.username ?? claims.username } : {}),
+          roles,
           envKey: false,
         }
       }
@@ -106,17 +137,35 @@ export async function resolveIdentity(req: FastifyRequest, cfg: Config, deps: Id
 }
 
 /** 登录换 token：claims 里必须有 user_id/roles，面板与数据面都靠它 */
+/**
+ * 签发：claims 与 Go 版逐字同形（uid/username/jti/iat/iss/sub + exp）。
+ * 刻意**不写 roles**：角色以库为准，改完立刻生效；也让两边签的票互相认得。
+ */
 export function issueToken(
-  user: { id: number; username: string; roles: string[] },
+  user: { id: number; username: string },
   cfg: Config,
   jti: string = randomBytes(9).toString('base64url'),
 ): { token: string; expires_at: string; jti: string } {
-  const expSec = Math.floor(Date.now() / 1000) + cfg.jwtExpireHours * 3600
-  const token = signToken(
-    { user_id: user.id, username: user.username, roles: user.roles, exp: expSec, jti },
-    cfg.jwtSecret,
-  )
-  return { token, expires_at: new Date(expSec * 1000).toISOString(), jti }
+  const iat = Math.floor(Date.now() / 1000)
+  const claims: Claims =
+    cfg.jwtExpireHours === -1
+      ? // 永不过期：省略 exp（Go 版 -1 的语义就是"不写 exp"）
+        { uid: user.id, username: user.username, jti, iat, iss: 'loomproxy', sub: 'user' }
+      : {
+          uid: user.id,
+          username: user.username,
+          jti,
+          iat,
+          iss: 'loomproxy',
+          sub: 'user',
+          exp: iat + (cfg.jwtExpireHours > 0 ? cfg.jwtExpireHours : 168) * 3600,
+        }
+  const token = signToken(claims, cfg.jwtSecret)
+  return {
+    token,
+    expires_at: claims.exp ? new Date(claims.exp * 1000).toISOString() : new Date(0).toISOString(),
+    jti,
+  }
 }
 
 export function isWhitelisted(path: string, cfg: Config): boolean {

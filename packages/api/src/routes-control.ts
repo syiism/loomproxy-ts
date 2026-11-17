@@ -82,6 +82,7 @@ async function adminOnly(req: FastifyRequest, reply: FastifyReply, config: Confi
   const id = await resolveIdentity(req, config, {
     ...(stores?.sessions ? { sessions: stores.sessions } : {}),
     ...(stores?.apiKeys ? { apiKeys: stores.apiKeys } : {}),
+    ...(stores?.users ? { users: stores.users } : {}),
   })
   if (!id.roles.includes('admin')) {
     reply.code(403).send(fail(config.errorCode, '需要管理员权限'))

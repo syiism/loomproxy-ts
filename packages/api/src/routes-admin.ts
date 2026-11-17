@@ -17,6 +17,7 @@ async function requireAdmin(req: FastifyRequest, reply: FastifyReply, deps: Deps
   const id = await resolveIdentity(req, deps.config, {
     ...(deps.stores.sessions ? { sessions: deps.stores.sessions } : {}),
     ...(deps.stores.apiKeys ? { apiKeys: deps.stores.apiKeys } : {}),
+    ...(deps.stores.users ? { users: deps.stores.users } : {}),
   })
   if (!id.roles.includes('admin')) {
     reply.code(403).send(fail(deps.config.errorCode, '需要管理员权限'))

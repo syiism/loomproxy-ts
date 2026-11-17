@@ -61,6 +61,8 @@ type PlanRow = { id: number; name: string; code: string; description: string; st
 
 export interface SessionStore {
   create(userId: number, jti: string, expiresAt: string, ip: string, userAgent: string): void
+  /** 这张票在不在本库（跨版本/跨库签发的票不在） */
+  exists(jti: string): boolean
   /** jti 是否仍然有效（未撤销、未过期）；用户被禁用也视为失效 */
   isActive(jti: string): boolean
   listByUser(userId: number): Array<{ id: number; jti: string; ip: string; user_agent: string; created_at: string; expires_at: string }>
@@ -80,6 +82,10 @@ export class DbSessions implements SessionStore {
       'INSERT INTO sessions (user_id, jti, ip, user_agent, created_at, expires_at) VALUES (?,?,?,?,?,?)',
       userId, jti, ip, userAgent, nowIso(), expiresAt,
     )
+  }
+
+  exists(jti: string): boolean {
+    return (this.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM sessions WHERE jti = ?', jti)?.n ?? 0) > 0
   }
 
   isActive(jti: string): boolean {
