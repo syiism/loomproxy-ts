@@ -323,7 +323,21 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
   // ---- 套餐（最小集：列表/增删改；限额与授权属额度域） ----
   app.get('/admin/quotas/plans', async (req, reply) => {
     if (!(await guard(req, reply))) return
-    return ok(stores.plans?.list() ?? [])
+    // 面板一次就要每个套餐的「限额」与「已授权的数据源 id」：
+    //   · Quotas 页按 p.limits 显示每档的行数与「源的 N 个」
+    //   · Datasources 页按 p.data_source_ids 反查「套餐 N」
+    // Go 那边是面板自己再查一遍；这里直接内联，少几趟请求（形状是超集，不改契约）
+    const dsStore = deps.dataSources as unknown as { listAll?: () => Array<{ id: number; name: string }> }
+    const idByName = new Map((dsStore?.listAll?.() ?? []).map((d) => [d.name, d.id]))
+    const plans = (stores.plans?.list() ?? []).map((p) => {
+      const limits = stores.quota?.limitsOfPlan(p.id) ?? []
+      const ids = limits
+        .filter((l) => l.scope === 'source')
+        .map((l) => idByName.get(l.target))
+        .filter((v): v is number => typeof v === 'number')
+      return { ...p, limits, data_source_ids: ids }
+    })
+    return ok(plans)
   })
   app.post('/admin/quotas/plans', async (req, reply) => {
     if (!(await guard(req, reply))) return
@@ -394,8 +408,19 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
     const { id } = req.params as { id: string }
     const b = (req.body ?? {}) as { source_names?: string[]; sources?: string[]; limit?: number }
     const names = b.source_names ?? b.sources ?? []
-    for (const n of names) q.grant(Number(id), 'source', n, b.limit ?? 0)
-    return ok({ granted: names.length })
+    const existing = new Set(q.grantedSources(Number(id)).map((l) => l.target))
+    let created = 0
+    let skipped = 0
+    for (const n of names) {
+      // 已授权的跳过（面板提示"跳过已授权 N 个"），不覆盖它已有的限额
+      if (existing.has(n)) {
+        skipped++
+        continue
+      }
+      q.grant(Number(id), 'source', n, b.limit ?? 0)
+      created++
+    }
+    return ok({ created, skipped })
   }
   app.post('/admin/quotas/plans/:id/sources', grantMany)
   app.post('/admin/quotas/plans/:id/data-sources', grantMany)
@@ -411,7 +436,8 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
       reply.code(400).send(fail(config.errorCode, '缺少来源套餐 from_plan_id'))
       return
     }
-    return ok({ cloned: q.cloneSources(Number(id), from) })
+    const created = q.cloneSources(Number(id), from)
+    return ok({ created, skipped: 0 })
   })
   app.delete('/admin/quotas/plans/:id/data-sources/:ds_id', async (req, reply) => {
     if (!(await guard(req, reply))) return
@@ -878,8 +904,9 @@ h1{font-size:18px}code{font-family:ui-monospace,Menlo,monospace}</style>
     const groups = stores.sourceGroups?.sections() ?? []
     const rows = (deps.dataSources?.listEnabled() ?? []).filter((ds) => {
       if (isAdmin) return true
-      // 非管理员只看见"套餐里有这一行"的源（限额即授权）
-      return q ? q.effectiveLimit(user.id, user.plan_id, ds.name) !== -1 : false
+      // 非管理员只看见"套餐里有这一行"的源（限额即授权）。
+      // 注意判据是**有没有行**，不是额度值：额度填 -1（不限）仍然算授权过。
+      return q ? q.hasGrant(user.plan_id, ds.name) : false
     })
 
     const sources = rows.map((ds) => {
@@ -1015,7 +1042,7 @@ h1{font-size:18px}code{font-family:ui-monospace,Menlo,monospace}</style>
     const isAdmin = id.roles.includes('admin')
     const mine = cfg.user(id.userId)
     const items = (deps.dataSources?.listEnabled() ?? [])
-      .filter((ds) => isAdmin || (stores.quota ? stores.quota.effectiveLimit(id.userId!, user?.plan_id ?? null, ds.name) !== -1 : false))
+      .filter((ds) => isAdmin || (stores.quota ? stores.quota.hasGrant(user?.plan_id ?? null, ds.name) : false))
       .map((ds) => ({ source_name: ds.name, source_display: ds.display_name, base_url: mine[ds.name] ?? '' }))
     return ok(items)
   })

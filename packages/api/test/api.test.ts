@@ -644,3 +644,40 @@ test('数据源 PATCH/DELETE：404/无字段/非法分组/rank_public 走设置�
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('套餐授权：批量授权回 created/skipped、限额 -1 视为「已授权但不限」、看板不该把它藏起来', async () => {
+  const { app, root, quota, plans } = await makeApp()
+  try {
+    const H = { authorization: `Bearer ${adminToken()}` }
+    const planId = plans.list()[0]!.id
+
+    // 面板的默认 bulkLimit 是 -1（不限）——这一步以前会被当成"没授权"
+    const first = await app.inject({ method: 'POST', url: `/admin/quotas/plans/${planId}/sources`, headers: H, payload: { sources: ['demo_one'], limit: -1 } })
+    assert.equal(first.statusCode, 200)
+    assert.deepEqual((first.json() as { data: { created: number; skipped: number } }).data, { created: 1, skipped: 0 })
+
+    // 再授一次同源：跳过，不覆盖已有额度
+    const again = await app.inject({ method: 'POST', url: `/admin/quotas/plans/${planId}/sources`, headers: H, payload: { sources: ['demo_one'], limit: 99 } })
+    assert.deepEqual((again.json() as { data: { created: number; skipped: number } }).data, { created: 0, skipped: 1 })
+    assert.equal(quota.effectiveLimit(2, planId, 'demo_one'), -1, '已授权的额度没被覆盖')
+
+    // 授权行存在 = 能用（额度 -1 仍算授权）：普通用户看板要能看到这个源
+    const dash = await app.inject({ method: 'GET', url: '/quota/dashboard', headers: { authorization: `Bearer ${userToken()}` } })
+    const sources = (dash.json() as { data: { sources: Array<{ source_code: string; effective_total: number }> } }).data.sources
+    assert.deepEqual(sources.map((s) => [s.source_code, s.effective_total]), [['demo_one', -1]])
+
+    // 套餐列表内联 limits / data_source_ids（面板据此显示「源的 N 个」与「套餐 N」）
+    const list = await app.inject({ method: 'GET', url: '/admin/quotas/plans', headers: H })
+    const plan = (list.json() as { data: Array<{ id: number; limits: Array<{ scope: string; target: string }>; data_source_ids: number[] }> }).data.find((p) => p.id === planId)!
+    assert.ok(plan.limits.some((l) => l.scope === 'source' && l.target === 'demo_one'))
+    assert.deepEqual(plan.data_source_ids, [1])
+
+    // 复制到另一个套餐：回 created/skipped
+    const p2 = plans.create({ name: '二套', code: 'x2' })
+    const cloned = await app.inject({ method: 'POST', url: `/admin/quotas/plans/${p2.id}/clone-sources`, headers: H, payload: { from_plan_id: planId } })
+    assert.deepEqual((cloned.json() as { data: { created: number; skipped: number } }).data, { created: 1, skipped: 0 })
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})

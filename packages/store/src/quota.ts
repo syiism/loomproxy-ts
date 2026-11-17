@@ -81,7 +81,19 @@ export class DbQuota {
     return this.db.run('DELETE FROM user_quota_overrides WHERE user_id = ?', userId).changes
   }
 
-  /** 生效额度：覆盖优先，其次套餐；-1 = 不限（plan 里没有这一行） */
+  /**
+   * **有没有授权**（本套餐有没有这个源的行）。授权与额度是两件事：
+   * 行存在 = 能用；额度 -1 = 不限。混用会让"授权了但额度填 -1"的源从看板上消失。
+   */
+  hasGrant(planId: number | null, source: string): boolean {
+    if (planId === null) return false
+    return (this.db.get<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM quota_limits WHERE plan_id = ? AND scope = ? AND target IN (?, \'*\')',
+      planId, 'source', source,
+    )?.n ?? 0) > 0
+  }
+
+  /** 生效额度：覆盖优先，其次套餐；-1 = 不限（plan 里没有这一行时也回 -1） */
   effectiveLimit(userId: number, planId: number | null, source: string): number {
     // `limit` 是 SQLite 保留字：列名与别名都要引号，别名再换一个非保留名
     const ov = this.db.get<{ lim: number }>(
