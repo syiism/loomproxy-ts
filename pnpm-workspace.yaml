@@ -6,4 +6,5 @@ packages:
   - "packages/gate"
   - "packages/source-host"
   - "packages/api"
+  - "packages/plugins/*"
   - "apps/*"

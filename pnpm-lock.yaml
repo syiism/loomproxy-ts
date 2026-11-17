@@ -97,6 +97,18 @@ importers:
         specifier: ^7.0.0
         version: 7.30.2
 
+  packages/plugins/fq_novel:
+    dependencies:
+      '@loomproxy/contract':
+        specifier: workspace:*
+        version: link:../../contract
+      '@loomproxy/kernel':
+        specifier: workspace:*
+        version: link:../../kernel
+      '@loomproxy/source-kit':
+        specifier: workspace:*
+        version: link:../../source-kit
+
   packages/source-host:
     dependencies:
       '@loomproxy/contract':

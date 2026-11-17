@@ -209,6 +209,12 @@ Monitor 早于 Access/Billing/RateLimit；IPBlock 晚于 CORS；RequiredParams �
 `handleError` 的映射必须照抄：`context.Canceled` 直接静默返回（不写响应体），
 `UpstreamError.StatusCode==0` 且 `DeadlineExceeded` → 504「上游请求超时」，其余 `0` → 502。
 
+**已知差异（Node 侧实现，2026-11-17 实测）**：请求行里带**未经百分号编码的非 ASCII 字节**
+（`curl "…/search?query=三体"` 这种）会被 Node 的 HTTP 解析器（llhttp）直接判 400
+`{"error":"Bad Request","message":"Client Error"}`，而 Go/gin 接受。`insecureHTTPParser: true`
+也放不过（这是 request-target 的解析限制，不是头部宽松开关）。所有真实客户端（okhttp / 浏览器 /
+legado）都会编码，所以按"不改契约、只在文档记一笔"处理；**不要**为了这条去开宽松 HTTP 解析。
+
 ## 8. 迁移期怎么证明"没漂"（对拍方法）
 
 1. **黄金语料**：每个源取 5–10 条真实请求（search/detail/chapter/content/explore + 4 类边界：

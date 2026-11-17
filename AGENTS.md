@@ -13,8 +13,10 @@
    `omitempty` → `undefined`（不是 `null`）、字段名逐字照抄。改任何一条都算破坏前端（① §1）。
 4. **Node strip-only 语法**：不用 `enum` / `namespace` / 构造器参数属性 / 装饰器。
    类型导入一律 `import type`（`verbatimModuleSyntax`）。
-5. **源包实现暂不做**：本轮只用 `packages/source-host/test/fixtures/*` 的夹具验证宿主；
-   真源落地时按 ④ §3 的插件包形状（一源一包、manifest 是唯一声明位）。
+5. **源包只做试点**：目前只有 `packages/plugins/fq_novel`。新源照它的结构（一源一包、
+   `manifest.json` 是唯一声明位、宿主用 `packages/source-host/test/fixtures/*` 夹具验证）。
+   **协议层复用外部参考实现**（`/home/muyang/work/novels/fanq`，见 README「外部依赖」）时，
+   不要顺手把签名/加密/会话池抄进本仓——那是最容易与上游漂移的一块。
 
 ## 2. 改完必须跑
 
@@ -36,9 +38,21 @@ pnpm run check     # 分层 + tsc + 全部用例
 | `gate` | 六档访问判定顺序、双维限流、去重窗口 |
 | `source-host` | 扫描/reload/rollback/drain/卸载 + 四种坏插件各留记录且不拖垮别人 |
 | `api` | 信封形状、参数注入规则、必填参数 400、未知源 404、插件管理要管理员 |
+| `packages/plugins/*` | 映射纯函数用例（不连网）+ `node tools/plugin-run.mjs <code> <action>` 实网跑通一个动作 |
 | `apps/server` | `compose()` 起得来：无插件目录也能起，有插件立即可派发 |
 
-## 4. 写代码的约定
+## 4. 插件（源包）的三步跑通
+
+```bash
+node tools/plugin-run.mjs fq_novel search query=三体     # ① 单插件直跑（真上游）
+node tools/pack-plugin.mjs fq_novel                      # ② 打包成 plugins/<code>/<version>/
+PLUGIN_DIR=plugins node apps/server/src/main.ts          # ③ 起服务 → curl /datasources、/fq_novel/search
+```
+
+三条都过才算"跑通"。映射逻辑必须放进 `src/normalize.ts` 并能被 `node --test` 单独覆盖——
+不要在 handler 里直接拼 DTO（那是下一步换源时要改的唯一地方，得可测）。
+
+## 5. 写代码的约定
 
 - **凡是"一处事实"的东西只留一处**：分页夹（`kernel/paging`）、时区日界（`kernel/clock`）、
   设置类型（`contract` 的 `SETTING_TYPES`）、缓存键含"这条响应属于谁"。

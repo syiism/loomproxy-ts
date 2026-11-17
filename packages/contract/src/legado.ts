@@ -66,6 +66,8 @@ export const chapterItemSchema = z
   .object({ title: str, itemId: str, chapterInfo: str, isVip: z.boolean() })
   .strict()
 
+export type ChapterItem = z.infer<typeof chapterItemSchema>
+
 export const chapterResponseSchema = z
   .object({
     chapterList: z.array(chapterItemSchema),
