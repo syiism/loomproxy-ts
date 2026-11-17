@@ -21,7 +21,7 @@
 ## 2. 改完必须跑
 
 ```bash
-pnpm run check     # 分层 + tsc + 全部用例
+pnpm run check     # 分层 + tsc + 面板构建 + 全部用例
 ```
 
 三条都要绿。用例**不许**连真实上游、不许依赖 MySQL/Redis：`gate/api/source-host` 用内存实现，
@@ -52,7 +52,17 @@ PLUGIN_DIR=plugins node apps/server/src/main.ts          # ③ 起服务 → cur
 三条都过才算"跑通"。映射逻辑必须放进 `src/normalize.ts` 并能被 `node --test` 单独覆盖——
 不要在 handler 里直接拼 DTO（那是下一步换源时要改的唯一地方，得可测）。
 
-## 5. 写代码的约定
+## 5. 面板（web/）的规矩
+
+- 只调**后端已实现**的端点。后端没有的域（套餐/额度/卡密/用户…）不要先写页面或假按钮——
+  空壳页面会让人以为"功能有了只是没数据"。
+- `web/src/api/client.ts` 与 Go 版面板同一份契约：成功取 `payload.data`、`code !== 0` 抛错、401 清票跳登录。
+  这三条任意一条改动，面板里所有调用点一起坏。
+- 路径挂在 `/panel`（`vite base: '/panel/'` + router `createWebHistory('/panel')`），产物由
+  `packages/api/src/web.ts` 托管（`/panel/*` 回退 index.html，`assets/` 长缓存，其余 no-cache）。
+- 改完必须 `pnpm run check:web`；`pnpm run check` 已经包含它。
+
+## 6. 写代码的约定
 
 - **凡是"一处事实"的东西只留一处**：分页夹（`kernel/paging`）、时区日界（`kernel/clock`）、
   设置类型（`contract` 的 `SETTING_TYPES`）、缓存键含"这条响应属于谁"。

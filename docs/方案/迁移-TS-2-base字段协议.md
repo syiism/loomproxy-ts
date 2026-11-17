@@ -257,7 +257,8 @@ Kind   = "" | "burn_wall_clock" | "spread"
 
 落库字段（`api_call_logs`）：`username, ip, source, action, status, in_band_error,
 in_band_reason, in_band_code, latency_ms, created_at, keyword, book_name, chapter_title,
-book_ident, chapter_ident, media_type, result_count, content_withheld`；
+book_ident, chapter_ident, media_type, result_count, content_withheld, **plugin_version**`
+（最后一格是 ④ §7 批准的：热更新之后要能按版本切分读数；空 = 非插件路径/旧行）；
 聚合归档表 `api_call_stats(source, action, total, success, failed, total_latency_ms, max_latency_ms)`。
 
 `content_withheld` 的语义是"**用户自己关掉了留存**"，不是"没抽到"——两个"全空"必须分得开，

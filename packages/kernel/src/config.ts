@@ -32,6 +32,8 @@ export type Config = {
   jwtExpireHours: number
   dbType: string
   pluginDir: string
+  /** 面板静态产物目录（Vue 构建输出）；缺省 web/dist */
+  webDist: string
   /** 注册表换代计数进 /datasources 缓存键（否则"加载了新源但清单里没有"） */
   warnings: string[]
 }
@@ -64,6 +66,7 @@ const DEFAULTS = {
   JWT_SECRET: 'loomproxy-default-secret-change-me',
   JWT_EXPIRE_HOURS: '168',
   PLUGIN_DIR: 'plugins',
+  WEB_DIST: 'web/dist',
 } as const
 
 export const DEFAULT_JWT_SECRET = DEFAULTS.JWT_SECRET
@@ -154,6 +157,7 @@ export function loadConfig(env: Env = process.env): Config {
     jwtExpireHours: r.int('JWT_EXPIRE_HOURS'),
     dbType: r.str('DB_TYPE'),
     pluginDir: r.str('PLUGIN_DIR'),
+    webDist: r.str('WEB_DIST'),
     warnings,
   }
   // 生产环境（启用鉴权）强制要求改默认 JWT_SECRET（Go 版同口径：直接拒绝启动）

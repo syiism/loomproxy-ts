@@ -6,9 +6,10 @@ import { ClientCanceled, isUpstreamError, newSubject } from '@loomproxy/contract
 import type { Config, Logger, Upstream } from '@loomproxy/kernel'
 import { Ledger, RateLimiter, accessMessage, contentKeyOf, sourceAccessVerdict } from '@loomproxy/gate'
 import { createFetchFacade, observeCall, stampSearchSource } from '@loomproxy/source-kit'
-import type { DataSourceStore, SettingsStore } from '@loomproxy/store'
+import type { CallLogStore, DataSourceStore, SettingsStore } from '@loomproxy/store'
 import type { SourceHost } from '@loomproxy/source-host'
 import { resolveIdentity } from './auth.ts'
+import { trackCall } from './calls.ts'
 import { buildParams, declaredParams, missingRequired } from './params.ts'
 import { scrubInBandMsg } from './scrub.ts'
 import type { ActionName } from '@loomproxy/contract'
@@ -27,6 +28,8 @@ export type DispatchDeps = {
   settings: SettingsStore
   ledger: Ledger
   limiter: RateLimiter
+  /** 明细写入口：与平台其余部分同一条（出口 hook 记，不在 handler 里记） */
+  callLogs?: CallLogStore
 }
 
 function sanitizeMessage(msg: string): string {
@@ -45,6 +48,18 @@ export function createDispatcher(deps: DispatchDeps) {
     }
     const { entry, handler } = resolved
     const identity = resolveIdentity(req, deps.config)
+    // 明细的请求级上下文：出口 hook 用它记账（含 400/403/429/5xx，与 Go 的 monitor 同口径）
+    const subject = newSubject()
+    trackCall(req, {
+      source,
+      action,
+      params: {},
+      username: identity.username ?? (identity.userId !== undefined ? `#${identity.userId}` : 'anonymous'),
+      ip: req.ip,
+      startedAt: Date.now(),
+      pluginVersion: entry.version,
+      subject,
+    })
 
     // 在飞计数：换代要等这一代身上的请求走完（迁移-TS-4 §4）
     deps.host.begin(source)
@@ -54,6 +69,17 @@ export function createDispatcher(deps: DispatchDeps) {
       const declared = declaredParams(entry.params, action)
       const params = buildParams(declared, req.query as Record<string, unknown>, {
         ...(identity.userId !== undefined ? { uid: identity.userId } : {}),
+      })
+
+      trackCall(req, {
+        source,
+        action,
+        params,
+        username: identity.username ?? (identity.userId !== undefined ? `#${identity.userId}` : 'anonymous'),
+        ip: req.ip,
+        startedAt: Date.now(),
+        pluginVersion: entry.version,
+        subject,
       })
 
       // 350：必填参数（缺 → 400，不让源返回带内错误正文）
@@ -118,7 +144,6 @@ export function createDispatcher(deps: DispatchDeps) {
       }
 
       // 出口三处改写，顺序固定：观测 → 打标 → 带内脱敏
-      const subject = newSubject()
       observeCall(source, params, result, subject)
       if (action === 'search') result = stampSearchSource(result, source)
       result = scrubInBandMsg(result)

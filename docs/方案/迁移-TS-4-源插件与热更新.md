@@ -130,16 +130,18 @@ Go 版把声明位拆在三处（`init()` 注册 → `db.Init` 落行 → `OnBoo
 | `onBoot()` | 每次加载都调；插件自己保证幂等（② §2 已写） | 只记日志，插件仍可 active（Go 同口径） |
 | 池登记 | `pool.register(name, provider)` 幂等；`unload` 时 `pool.unregister` 并停止维护协程 | 池不可用 → 该源内容动作返回 `pool_unavailable` 带内错误 |
 
-## 7. 对外契约的变化点（要拍的三条）
+## 7. 对外契约的变化点（三条：2026-11-17 已批准并落地）
 
-| 变更 | 影响面 | 我的建议 |
+| 变更 | 状态 | 落点 |
 |---|---|---|
-| 新增 `GET /admin/sources/plugins`（code/version/status/isolation/generation/inflight/last_error） | 面板新增一页 | **要**，否则"加载失败"只有日志能看 |
-| 新增 `POST /admin/sources/:code/{reload,rollback,disable,unload}` + `POST /admin/sources/reload-all` | 面板按钮 | **要**，这是运维入口 |
-| 明细表加 `plugin_version` 列 | 观测契约（`api_call_logs` + 契约页 + 面板筛选） | **要**，且必须同批改观测契约页——否则"换了版本错误率变了"永远归因不了 |
+| 新增 `GET /admin/sources/plugins`（code/version/state/isolation/generation/inflight/dir/last_error） | ✅ 已落地 | `packages/api/src/routes.ts`；面板「源插件」页 |
+| 新增 `POST /admin/sources/:code/{reload,rollback,disable,unload}` + `POST /admin/sources/reload-all` | ✅ 已落地 | 同上；面板逐行按钮 + 页头「全部 reload」 |
+| 明细加 `plugin_version` 列（可按版本筛） | ✅ 已落地（TS 分支） | `contract/src/calls.ts` 的 `CallLogRow`、`store/src/call-logs.ts`、`api/src/calls.ts` 出口记账、`GET /admin/monitor/history?plugin_version=`、面板「调用明细」页 |
 
-第三条是**跨契约改动**：加列 = 改 `models/api_call_log.go` 的 JSON 列 + `docs/架构/观测契约-信封与明细字段.md`
-+ 面板 history 筛选。按仓里的规矩（P127①）三处必须同一批落地，不能"先加列回头补文档"。
+第三条仍是**跨契约改动**，落地的三处必须同批：① 数据结构（`CallLogRow`）② 写入口（请求出口 hook，不写在 handler 里，
+否则 4xx/5xx 会漏）③ 读入口与面板筛选。**骨架仓那侧的 `docs/架构/观测契约-信封与明细字段.md`
+仍需要同批补这一列**——本分支没有那页，记作跨仓待办；Go 版的 `models/api_call_log.go` 若也要加，
+必须与那页同一批改，否则两棵树对"哪些列存在"各说一套。
 
 ## 8. worker 模式下的取数栈（唯一真难点）
 

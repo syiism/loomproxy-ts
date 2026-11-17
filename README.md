@@ -26,6 +26,7 @@ packages/source-host L3 插件宿主：扫描 / manifest 校验 / 换代 / drain
 packages/api        L4′ Fastify 装配：控制面路由 + /:source/:action 派发
 packages/plugins/*  L4  源包（一源一包）：manifest.json + src/index.ts，只依赖 contract/kernel/source-kit
 apps/server         L5  进程入口（compose → listen → 停机），装配顺序的唯一出处
+web                 —  Vue3 + Vite 面板（/panel），只调**已实现**的端点；产物 web/dist 由 server 托管
 ```
 
 **已落地的源包**：`packages/plugins/fq_novel`（番茄小说，搜索/详情/目录/正文四动作，实网跑通）。
@@ -49,6 +50,10 @@ node tools/plugin-run.mjs fq_novel content bookId=6983938353934634020 itemId=747
 
 # 打包成运行期插件目录（plugins/<code>/<version>/，然后 host 就能扫到；产物已 gitignore）
 node tools/pack-plugin.mjs fq_novel
+
+# 面板
+pnpm run check:web     # 构建面板（等价 pnpm -F @loomproxy/web build）
+pnpm run dev:web       # 面板开发态（:5174，接口代理到 :8081）
 ```
 
 Node 24 直接跑 `.ts`（type stripping），所以**用例不需要构建**；这也约束了写法：
@@ -65,9 +70,12 @@ Node 24 直接跑 `.ts`（type stripping），所以**用例不需要构建**；
 | 访问判定六档（顺序与 Go 一致）、双维限流、计费去重窗口 | ✅ `packages/gate` |
 | `/`、`/datasources`、`/data*`、`/endpoints`、`/announcement`、`/admin/sources/*`、`/:source/:action` | ✅ `packages/api` |
 | 插件目录 `fs.watch` → 只 reload 变动源（**不重启进程**） | ✅ `apps/server` |
+| 面板：登录 / 数据源 / 源插件（reload·rollback·disable·unload·reload-all）/ 调用明细（可按 `plugin_version` 筛） | ✅ `web` |
+| 调用明细 `plugin_version` 列（④ §7 批准的那一格） | ✅ 出口 hook 记账 + `/admin/monitor/history` |
 | 源包实现 | ✅ 试点 1 个：`fq_novel`（4 动作，实网跑通 search/detail/chapter/content）；其余源未开始 |
 | drizzle/sqlite 持久化（设置、data_sources、明细、号池表） | ⛔ 未接（`store` 现为内存实现） |
-| worker 隔离模式、号池运行时、面板静态托管、socket activation | ⛔ 未接（设计见 ④ §2/§8、③ §9） |
+| worker 隔离模式、号池运行时、socket activation | ⛔ 未接（设计见 ④ §2/§8、③ §9） |
+| 面板其余域（套餐/额度/卡密/用户/角色/分组/定时） | ⛔ 未接：后端还没这些端点，**面板里也不留假入口**（① §6 的清单是目标，不是现状） |
 
 ## 外部依赖（fq_novel 试点）
 

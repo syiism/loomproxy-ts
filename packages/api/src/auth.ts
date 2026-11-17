@@ -88,6 +88,19 @@ export function resolveIdentity(req: FastifyRequest, cfg: Config): Identity {
   return ANONYMOUS
 }
 
+/** 登录换 token：claims 里必须有 user_id/roles，面板与数据面都靠它 */
+export function issueToken(user: { id: number; username: string; roles: string[] }, cfg: Config): {
+  token: string
+  expires_at: string
+} {
+  const expSec = Math.floor(Date.now() / 1000) + cfg.jwtExpireHours * 3600
+  const token = signToken(
+    { user_id: user.id, username: user.username, roles: user.roles, exp: expSec },
+    cfg.jwtSecret,
+  )
+  return { token, expires_at: new Date(expSec * 1000).toISOString() }
+}
+
 export function isWhitelisted(path: string, cfg: Config): boolean {
   return cfg.authWhitelist.some((p) => p !== '/' && (path === p || path.startsWith(`${p}/`)))
 }

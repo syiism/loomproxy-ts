@@ -5,15 +5,17 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { fail, ok, type SearchTab } from '@loomproxy/contract'
 import { clampPage, clampPageSize } from '@loomproxy/kernel'
 import type { Config } from '@loomproxy/kernel'
-import type { DataSourceStore } from '@loomproxy/store'
+import type { CallLogStore, DataSourceStore, UserStore } from '@loomproxy/store'
 import type { SourceHost } from '@loomproxy/source-host'
-import { resolveIdentity } from './auth.ts'
+import { issueToken, resolveIdentity } from './auth.ts'
 import { declaredParams } from './params.ts'
 
 export type RouteDeps = {
   config: Config
   host: SourceHost
   dataSources: DataSourceStore
+  users?: UserStore
+  callLogs?: CallLogStore
 }
 
 type DatasourceItem = {
@@ -105,6 +107,57 @@ export function registerControlRoutes(app: FastifyInstance, deps: RouteDeps): vo
   // 存活探针：裸对象（与 Go 版同形状）
   app.get('/', async () => ({ app: 'LoomProxy', status: 'ok', panel: '/panel' }))
 
+  // ---- 登录（面板唯一入口；本轮只有 env 单管理员） ----
+  app.post('/auth/login', async (req, reply) => {
+    const body = (req.body ?? {}) as { username?: string; password?: string; email?: string }
+    const username = (body.username ?? body.email ?? '').trim()
+    if (!username || !body.password) {
+      reply.code(400).send(fail(config.errorCode, '请输入用户名与密码'))
+      return
+    }
+    const user = deps.users?.verify(username, body.password)
+    if (!user || user.status !== 1) {
+      // 用户不存在与密码错误统一口径（与 Go 版一致）：不给出"哪一个错了"
+      reply.code(401).send(fail(config.errorCode, '用户名或密码错误'))
+      return
+    }
+    const { token, expires_at } = issueToken(user, config)
+    return ok({
+      token,
+      expires_at,
+      user: {
+        id: user.id,
+        username: user.username,
+        nickname: user.nickname,
+        email: user.email,
+        status: user.status,
+        roles: user.roles,
+      },
+    })
+  })
+
+  app.get('/auth/me', async (req, reply) => {
+    const id = resolveIdentity(req, config)
+    if (id.userId === undefined) {
+      reply.code(401).send(fail(401, '请先登录'))
+      return
+    }
+    const user = deps.users?.byId(id.userId)
+    return ok({
+      id: user?.id ?? id.userId,
+      username: user?.username ?? id.username ?? '',
+      nickname: user?.nickname ?? '',
+      email: user?.email ?? '',
+      status: user?.status ?? 1,
+      roles: user?.roles ?? id.roles,
+    })
+  })
+
+  app.post('/auth/logout', async () => ok({}))
+  app.post('/auth/register', async (_req, reply) => {
+    reply.code(403).send(fail(config.errorCode, '本部署未开放注册（账号由 ADMIN_USERNAME/ADMIN_PASSWORD 提供）'))
+  })
+
   app.get('/datasources', async (_req, reply) => {
     reply.header('cache-control', 'no-store')
     return ok(datasourcesOf(deps))
@@ -181,6 +234,43 @@ export function registerControlRoutes(app: FastifyInstance, deps: RouteDeps): vo
       page_size: clampPageSize(q['page_size']),
       versions: deps.host.latestVersions(),
     })
+  })
+
+  app.post('/admin/sources/reload-all', async (req, reply) => {
+    if (!adminOnly(req, reply, config)) return
+    const results = []
+    for (const info of deps.host.info()) {
+      try {
+        results.push(await deps.host.reload(info.code))
+      } catch (e) {
+        results.push({ code: info.code, state: 'failed', last_error: e instanceof Error ? e.message : String(e) })
+      }
+    }
+    return ok(results)
+  })
+
+  // 明细历史：筛选键与 Go 版同名同义，多一个 plugin_version（④ §7 批准的那一格）
+  app.get('/admin/monitor/history', async (req, reply) => {
+    if (!adminOnly(req, reply, config)) return
+    if (!deps.callLogs) {
+      reply.code(503).send(fail(config.errorCode, '本部署未启用调用明细'))
+      return
+    }
+    const q = req.query as Record<string, string>
+    const page = deps.callLogs.page({
+      page: clampPage(q['page']),
+      pageSize: clampPageSize(q['page_size']),
+      ...(q['source'] ? { source: q['source'] } : {}),
+      ...(q['action'] ? { action: q['action'] } : {}),
+      ...(q['username'] ? { username: q['username'] } : {}),
+      ...(q['plugin_version'] ? { pluginVersion: q['plugin_version'] } : {}),
+      ...(q['in_band_code'] ? { inBandCode: q['in_band_code'] } : {}),
+      ...(q['media_type'] ? { mediaType: q['media_type'] } : {}),
+      ...(q['keyword'] ? { keyword: q['keyword'] } : {}),
+      ...(q['book_name'] ? { bookName: q['book_name'] } : {}),
+      ...(q['chapter_title'] ? { chapterTitle: q['chapter_title'] } : {}),
+    })
+    return ok(page)
   })
 
   for (const op of ['reload', 'rollback'] as const) {

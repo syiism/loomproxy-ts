@@ -184,12 +184,12 @@ Monitor 早于 Access/Billing/RateLimit；IPBlock 晚于 CORS；RequiredParams �
 | 套餐与限额 | `GET/POST /quotas/plans`、`PATCH/DELETE /quotas/plans/:id`、`GET /quotas/plans/:id/{limits,data-sources}`、`POST /quotas/plans/:id/{data-sources,data-sources/batch,sources,clone-sources}`、`DELETE /quotas/plans/:id/data-sources/:ds_id`、`POST /quotas/limits`、`PUT/DELETE /quotas/limits/:id` |
 | 接口成本 | `GET /quota-costs`、`PUT /quota-costs/:id`、`GET /quota-costs/plans`、`PUT /quota-costs/plans/:id`、`POST /quota-costs/plans/upsert` |
 | 用量流水 | `GET /usage-logs` |
-| 监控 | `GET /monitor`、`GET /monitor/history`、`GET /monitor/trend`、`GET /monitor/subjects`、`GET /monitor/report.html`、`POST /monitor/reset`、`POST /monitor/backfill-subjects` |
+| 监控 | `GET /monitor`、`GET /monitor/history`（**TS 已落地**，多一个 `plugin_version` 筛选）、`GET /monitor/trend`、`GET /monitor/subjects`、`GET /monitor/report.html`、`POST /monitor/reset`、`POST /monitor/backfill-subjects` |
 | 号池 | `GET /pools`（`pool.StatusAll()`，凭证只列键名） |
 | 卡密 | `GET/POST /redeem-codes`、`POST /redeem-codes/:id/revoke`、`POST /redeem-codes/revoke-selected`、`DELETE /redeem-codes/batch/:batch_no` |
 | 源配置/分组/定时 | `GET/PUT /source-configs`；`GET/POST /source-groups`、`PATCH/DELETE /source-groups/:id`、`PUT /source-groups/:id/members`、`POST /source-groups/:id/apply-limits`；`GET/POST /source-schedules`、`PATCH/DELETE /source-schedules/:id` |
 | 数据源 | `GET/POST /data-sources`、`PATCH/DELETE /data-sources/:id` |
-| 源插件（热更新） | `GET /admin/sources/plugins`；`POST /admin/sources/:code/{reload,rollback,disable,unload}`；`POST /admin/sources/reload-all` —— **新增**，见 [`迁移-TS-4-源插件与热更新.md`](迁移-TS-4-源插件与热更新.md) §7 |
+| 源插件（热更新） | `GET /admin/sources/plugins`、`GET /admin/sources/versions`；`POST /admin/sources/:code/{reload,rollback,disable,unload}`；`POST /admin/sources/reload-all` —— ④ §7 批准并已落地 |
 
 `/monitor/report.html` 是**服务端渲染 HTML**（不是 JSON），TS 版要么照抄模板，要么退化成 302 到面板页——
 **这条要单独拍**（面板里有入口链到它）。

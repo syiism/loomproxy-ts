@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadConfig, silentLogger, Upstream } from '@loomproxy/kernel'
 import { SourceRegistry } from '@loomproxy/source-kit'
-import { InMemoryDataSources, InMemorySettings } from '@loomproxy/store'
+import { EnvAdminUser, InMemoryCallLogs, InMemoryDataSources, InMemorySettings } from '@loomproxy/store'
 import { SourceHost } from '@loomproxy/source-host'
 import { buildServer, signToken } from '../src/index.ts'
 import { RateLimiter } from '@loomproxy/gate'
@@ -67,8 +67,10 @@ async function makeApp() {
   // 每个请求把时钟推进 5s：本用例要验的是派发形状，不是限流
   let tick = 0
   const limiter = new RateLimiter(() => 1_000_000 + tick++ * 5_000)
-  const app = buildServer({ config, logger, upstream, host, dataSources, settings, limiter })
-  return { app, root, config, host }
+  const users = new EnvAdminUser('admin', 'secret-pass')
+  const callLogs = new InMemoryCallLogs({ max: 100 })
+  const app = buildServer({ config, logger, upstream, host, dataSources, settings, limiter, users, callLogs })
+  return { app, root, config, host, callLogs }
 }
 
 const adminToken = () => signToken({ user_id: 1, username: 'admin', roles: ['admin'] }, SECRET)
@@ -235,6 +237,92 @@ test('静态字典：缺文件 404 且不列清单', async () => {
     assert.equal(index.statusCode, 200)
     const body = index.json() as { data: { count: number; sources: Record<string, unknown> } }
     assert.equal(body.data.count, 0)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('登录：错密码 401，对密码拿到 token，/auth/me 认 token', async () => {
+  const { app, root } = await makeApp()
+  try {
+    const bad = await app.inject({ method: 'POST', url: '/auth/login', payload: { username: 'admin', password: 'x' } })
+    assert.equal(bad.statusCode, 401)
+    assert.match((bad.json() as { msg: string }).msg, /用户名或密码错误/)
+
+    const ok = await app.inject({ method: 'POST', url: '/auth/login', payload: { username: 'admin', password: 'secret-pass' } })
+    assert.equal(ok.statusCode, 200)
+    const body = ok.json() as { code: number; data: { token: string; expires_at: string; user: { username: string; roles: string[] } } }
+    assert.equal(body.code, 0)
+    assert.ok(body.data.token.split('.').length === 3)
+    assert.deepEqual(body.data.user.roles, ['admin'])
+
+    const me = await app.inject({ method: 'GET', url: '/auth/me', headers: { authorization: `Bearer ${body.data.token}` } })
+    assert.equal(me.statusCode, 200)
+    assert.equal((me.json() as { data: { username: string } }).data.username, 'admin')
+
+    const anon = await app.inject({ method: 'GET', url: '/auth/me' })
+    assert.equal(anon.statusCode, 401)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('明细：每次派发落一行并带 plugin_version，历史页可按版本筛（④ §7 批准的第三格）', async () => {
+  const { app, root, callLogs } = await makeApp()
+  try {
+    const token = adminToken()
+    const search = await app.inject({ method: 'GET', url: '/demo_one/search?key=x' })
+    assert.equal(search.statusCode, 200)
+    const miss = await app.inject({ method: 'GET', url: '/demo_one/content?bookId=b1' })
+    assert.equal(miss.statusCode, 400)
+    assert.equal(callLogs.count(), 2, '成功与被拒的请求都进明细（Go 的 monitor 同口径）')
+
+    const hit = await app.inject({
+      method: 'GET',
+      url: '/admin/monitor/history?plugin_version=1.0.0&source=demo_one',
+      headers: { authorization: `Bearer ${token}` },
+    })
+    assert.equal(hit.statusCode, 200)
+    const page = (hit.json() as { data: { total: number; list: Array<Record<string, unknown>> } }).data
+    assert.equal(page.total, 2)
+    const row = page.list.find((r) => r['status'] === 400)!
+    assert.equal(row['plugin_version'], '1.0.0')
+    assert.equal(row['action'], 'content')
+    assert.equal(row['chapter_ident'], '')
+    assert.ok(typeof row['latency_ms'] === 'number')
+
+    const none = await app.inject({
+      method: 'GET',
+      url: '/admin/monitor/history?plugin_version=9.9.9',
+      headers: { authorization: `Bearer ${token}` },
+    })
+    assert.equal((none.json() as { data: { total: number } }).data.total, 0)
+
+    // 非管理员不许看明细
+    const forbidden = await app.inject({ method: 'GET', url: '/admin/monitor/history', headers: { authorization: `Bearer ${userToken()}` } })
+    assert.equal(forbidden.statusCode, 403)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('reload-all：一次把所有插件换代，失败的各留 last_error', async () => {
+  const { app, root } = await makeApp()
+  try {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/admin/sources/reload-all',
+      headers: { authorization: `Bearer ${adminToken()}` },
+    })
+    assert.equal(res.statusCode, 200)
+    const list = (res.json() as { data: Array<{ code: string; state: string; version: string }> }).data
+    assert.equal(list.length, 1)
+    assert.equal(list[0]?.code, 'demo_one')
+    assert.equal(list[0]?.state, 'active')
+    assert.equal(list[0]?.version, '1.0.0')
   } finally {
     await app.close()
     rmSync(root, { recursive: true, force: true })

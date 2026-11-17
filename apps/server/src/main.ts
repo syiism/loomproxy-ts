@@ -47,7 +47,7 @@ async function main(): Promise<void> {
 
   installSignalHandlers(shutdown, () => process.exit(0))
   await app.listen({ host: config.serverHost, port: config.serverPort })
-  console.log(`[loomproxy] listening on ${config.serverHost}:${config.serverPort}`)
+  console.log(`[loomproxy] listening on ${config.serverHost}:${config.serverPort}（面板 /panel）`)
 }
 
 main().catch((e: unknown) => {
