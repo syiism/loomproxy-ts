@@ -76,6 +76,10 @@ PLUGIN_DIR=plugins node apps/server/src/main.ts          # ③ 起服务 → cur
 - 未接域一律 501 + 人话（`notWired()`），不要返回成功空响应。
 - JWT claims 必须与 Go `utils/jwt.go` 同形（`uid`/`username` + jti/iat/iss/sub，`exp` 可缺省）；
   **角色永远从库里读**，不要往 token 里塞 roles。外来 jti（本库没有）按签名放行，本库有的必须有效。
+- 设置项**声明了就要有读取方**：`BUILTIN_SETTINGS`（store/seed.ts）里每条内置设置在代码里都要有人读
+  （公告→/announcement；注册开关/默认角色/默认套餐/邮箱名单→/auth/register；维护模式→dispatch；
+  验证码场景→/verify/config；jwt_expire_hours→登录签发）。新增键时同一批补读取方与用例，
+  否则它只是面板上的装饰位（Go 版 P53 那条判据）。
 - 管理员口令：`ADMIN_PASSWORD` 只用于**创建**；改密/重置后必须写 `kv_state` 的
   `admin_password_source:<名字>=panel`，否则下次重启会被 env 覆盖（或反过来让 env 永远不生效）。
 - `DATA_DIR`/`DB_PATH` 相对 cwd：启动日志必须打印解析后的库路径与管理员名，否则"换目录启动"会表现成"密码错"。

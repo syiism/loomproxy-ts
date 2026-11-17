@@ -120,7 +120,13 @@ export function createDispatcher(deps: DispatchDeps) {
         return
       }
 
-      // 400：访问判定（源存在 → 启用 → 匿名免费档 → 管理员 → 套餐授权）
+      // 维护模式：数据面一律 503，管理员除外（设置项 maintenance_mode，热读）
+    if (deps.settings.getBool('maintenance_mode', false) && !identity.roles.includes('admin')) {
+      reply.code(503).send({ code: deps.config.errorCode, msg: '系统维护中，请稍后再试' })
+      return
+    }
+
+    // 400：访问判定（源存在 → 启用 → 匿名免费档 → 管理员 → 套餐授权）
       const ds = deps.dataSources.get(source)
       const reason = sourceAccessVerdict({
         meta: entry.meta,

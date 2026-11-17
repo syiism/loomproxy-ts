@@ -19,6 +19,7 @@ import {
   DbSessions,
   DbSettings,
   DbUsers,
+  seedBuiltinSettings,
   InMemorySettings,
   SqliteDb,
 } from '@loomproxy/store'
@@ -70,6 +71,8 @@ async function makeApp() {
   const db = new SqliteDb(':memory:')
   db.migrate()
   const settings = new DbSettings(db)
+  // 内置设置（29 条）也一起播：注册开关/维护模式/验证码场景这些行为项都要有行才能改
+  seedBuiltinSettings(settings)
   const dataSources = new DbDataSources(db)
   const upstream = new Upstream({ config, logger })
   const host = new SourceHost({
@@ -110,7 +113,7 @@ async function makeApp() {
     config, logger, upstream, host, dataSources, settings, limiter,
     users, roles, plans, sessions, apiKeys, callLogs, quota, quotaExtra, sourceGroups, blockedIPs, devices,
   })
-  return { app, root, config, host, callLogs, users, quota, plans, quotaExtra, blockedIPs, dataSources, sessions, apiKeys, roles }
+  return { app, root, config, host, callLogs, users, quota, plans, quotaExtra, blockedIPs, dataSources, sessions, apiKeys, roles, settings }
 }
 
 const adminToken = () => signToken({ user_id: 1, username: 'admin', roles: ['admin'] }, SECRET)
@@ -506,6 +509,62 @@ test('JWT 互认：Go 形状的票（uid/username + jti，无 roles/exp）在本
     assert.equal((await app.inject({ method: 'GET', url: '/auth/me', headers: { authorization: `Bearer ${own}` } })).statusCode, 200)
     sessions.revoke('own-jti')
     assert.equal((await app.inject({ method: 'GET', url: '/auth/me', headers: { authorization: `Bearer ${own}` } })).statusCode, 401)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('默认设置真的生效：注册开关/默认角色与套餐/邮箱名单/维护模式/验证码场景', async () => {
+  const { app, root, users, settings, roles, plans } = await makeApp()
+  try {
+    // 关闭注册 → 403
+    settings.set('register_enabled', 'false')
+    const closed = await app.inject({ method: 'POST', url: '/auth/register', payload: { username: 'neo', password: 'pw' } })
+    assert.equal(closed.statusCode, 403)
+    assert.match((closed.json() as { msg: string }).msg, /注册已关闭/)
+
+    // 打开注册 + 默认角色/套餐（plan 用 free）
+    settings.set('register_enabled', 'true')
+    settings.set('default_role', 'user')
+    settings.set('default_quota_plan', 'basic')
+    const okRes = await app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { username: 'neo', email: 'neo@example.com', password: 'pw123456' },
+    })
+    assert.equal(okRes.statusCode, 200)
+    const body = okRes.json() as { data: { token: string; user: { username: string; plan: { code: string } | null; roles: Array<{ code: string }> } } }
+    assert.ok(body.data.token, '注册后直接发 token（面板据此跳转）')
+    assert.equal(body.data.user.plan?.code, 'basic')
+    assert.equal(body.data.user.roles[0]?.code, 'user')
+    assert.ok(users.byUsernameOrEmail('neo'))
+
+    // 邮箱黑白名单：白名单非空时别的域名一律拒
+    settings.set('email_domain_allowlist', 'example.com')
+    const bad = await app.inject({ method: 'POST', url: '/auth/register', payload: { username: 'trin', email: 't@other.com', password: 'pw' } })
+    assert.equal(bad.statusCode, 400)
+    const sub = await app.inject({ method: 'POST', url: '/auth/register', payload: { username: 'trin', email: 't@mail.example.com', password: 'pw' } })
+    assert.equal(sub.statusCode, 200, '后缀匹配：mail.example.com 命中 example.com')
+    settings.set('email_domain_allowlist', '')
+
+    // 验证码场景：只下发受支持的场景
+    settings.set('verify_code_scenes', 'register,bogus')
+    const vc = await app.inject({ method: 'GET', url: '/verify/config' })
+    assert.deepEqual((vc.json() as { data: { scenes: string[] } }).data.scenes, ['register'])
+
+    // 维护模式：普通用户 503，管理员放行（数据面）
+    settings.set('maintenance_mode', 'true')
+    const blocked = await app.inject({ method: 'GET', url: '/demo_one/search?key=a', headers: { authorization: `Bearer ${userToken()}` } })
+    assert.equal(blocked.statusCode, 503)
+    assert.match((blocked.json() as { msg: string }).msg, /系统维护中/)
+    const adminOk = await app.inject({ method: 'GET', url: '/demo_one/search?key=a', headers: { authorization: `Bearer ${adminToken()}` } })
+    assert.equal(adminOk.statusCode, 200)
+    settings.set('maintenance_mode', 'false')
+
+    // 设置项都对得上库（29 条内置在 compose 里播种；这里是 makeApp 的最小集）
+    assert.ok(plans.list().some((p) => p.code === 'basic'))
+    assert.ok(roles.list().some((r) => r.code === 'user'))
   } finally {
     await app.close()
     rmSync(root, { recursive: true, force: true })

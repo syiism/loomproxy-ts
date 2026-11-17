@@ -113,8 +113,17 @@ export function registerControlRoutes(app: FastifyInstance, deps: ControlDeps): 
     return { code: 0, msg: 'ok', count: data.length, data }
   })
 
-  // 验证码：本部署未接短信/邮件通道 → scenes 为空，面板据此隐藏输入框（不是报错）
-  app.get('/verify/config', async () => ok({ scenes: [] }))
+  // 验证码场景：由系统设置 verify_code_scenes 决定（逗号分隔；本部署尚未接短信/邮件通道，
+  // 所以发码端点回 501，但「哪些场景要验证码」仍按设置下发——面板据此决定是否显示输入框）
+  const SUPPORTED_SCENES = ['register', 'forgot_password']
+  app.get('/verify/config', async () => {
+    const raw = (deps.stores?.settings?.get('verify_code_scenes') ?? '').trim()
+    const scenes = raw
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => SUPPORTED_SCENES.includes(s))
+    return ok({ scenes, send_enabled: false })
+  })
   app.post('/verify/send', async (_req, reply) => {
     reply.code(501).send(fail(config.errorCode, '本部署未开启验证码通道（验证码需短信/邮件服务）'))
   })

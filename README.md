@@ -76,6 +76,7 @@ Node 24 直接跑 `.ts`（type stripping），所以**用例不需要构建**；
 | 源包实现 | ✅ 试点 1 个：`fq_novel`（4 动作，实网跑通 search/detail/chapter/content）；其余源未开始 |
 | **号池运行时** | ✅ `packages/pool`（墙钟/摊薄两形态、冷热/耗尽/死号/冷却、维护协程、快照脱敏）；fq_novel 的会话池已接入（spread 型，建号走 device_register，取号写 pinned 会话） |
 | **数据库读写** | ✅ SQLite（`node:sqlite` 内置，无 native/cgo）：users/roles/user_roles/sessions/api_keys/system_settings/data_sources/plans/api_call_logs/api_call_stats/quota_limits/user_quota_overrides/quota_usage_logs/quota_costs，DDL 在 `packages/store/src/sqlite.ts` |
+| **内置系统设置（29 条）** | ✅ 键/初值/类型/说明对齐 Go `db/seed.go`；**且真的生效**：`announcement`（/announcement 横幅）、`register_enabled`（注册开关）、`default_role`/`default_quota_plan`（新用户）、`email_domain_allowlist/blocklist`（后缀匹配，白名单优先）、`maintenance_mode`（数据面 503，管理员放行）、`verify_code_scenes`（/verify/config 下发场景）、`jwt_expire_hours`（登录有效期，-1 永不过期） |
 | **额度域** | ✅ 限额即授权（scope=source）、批量授权/复制、用户覆盖、日界起算点刷新、成功记账（去重窗口）、超额 429、看板/我的流水/admin 流水、接口成本表 |
 | drizzle/sqlite 持久化（设置、data_sources、明细、号池表） | ⛔ 未接（`store` 现为内存实现） |
 | worker 隔离模式 | ✅ manifest `isolation:"worker"`：独立线程跑 handler，取数/设置/池经线协议回主线程（缓存/熔断/代理仍一份），换代先 drain 再 terminate |

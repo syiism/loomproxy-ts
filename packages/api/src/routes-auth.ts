@@ -37,6 +37,25 @@ function jtiOf(req: FastifyRequest, cfg: Config): string | undefined {
   return verifyToken(token, cfg.jwtSecret)?.jti
 }
 
+/**
+ * 邮箱域名名单：与 Go 的 seed 说明同义——后缀匹配（example.com 命中 mail.example.com）、
+ * 白名单非空时先过白名单，再过黑名单。留空=不限制。
+ */
+function emailAllowed(email: string, settings?: { get(key: string): string }): boolean {
+  const domain = email.split('@')[1] ?? ''
+  if (!domain) return false
+  const norm = (raw: string): string[] =>
+    raw
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean)
+  const hit = (list: string[]) => list.some((d) => domain === d || domain.endsWith(`.${d}`))
+  const allow = norm(settings?.get('email_domain_allowlist') ?? '')
+  if (allow.length > 0 && !hit(allow)) return false
+  const block = norm(settings?.get('email_domain_blocklist') ?? '')
+  return !(block.length > 0 && hit(block))
+}
+
 export function registerAuthRoutes(app: FastifyInstance, deps: Deps): void {
   const { config, stores } = deps
   const unavailable = (reply: FastifyReply, msg: string) => {
@@ -73,8 +92,14 @@ export function registerAuthRoutes(app: FastifyInstance, deps: Deps): void {
       reply.code(403).send(fail(config.errorCode, '账号已被禁用'))
       return
     }
-    // 角色不写进 token（Go 版同口径）：每次请求从库里读，改完立刻生效
-    const { token, expires_at, jti } = issueToken({ id: hit.user.id, username: hit.user.username }, config)
+    // 角色不写进 token（Go 版同口径）：每次请求从库里读，改完立刻生效。
+    // 有效期：设置项 jwt_expire_hours 覆盖环境变量（-1 = 永不过期，Go 的同一条语义）
+    const hours = stores.settings?.getInt('jwt_expire_hours', config.jwtExpireHours) ?? config.jwtExpireHours
+    const effectiveHours = hours === 0 ? config.jwtExpireHours : hours
+    const { token, expires_at, jti } = issueToken(
+      { id: hit.user.id, username: hit.user.username },
+      { ...config, jwtExpireHours: effectiveHours },
+    )
     stores.sessions?.create(hit.user.id, jti, expires_at, req.ip, String(req.headers['user-agent'] ?? ''))
     users.touchLogin(hit.user.id)
     return ok({ token, expires_at, user: hit.user })
@@ -168,8 +193,53 @@ export function registerAuthRoutes(app: FastifyInstance, deps: Deps): void {
     return ok({ revoked: n })
   })
 
-  app.post('/auth/register', async (_req, reply) => {
-    reply.code(403).send(fail(config.errorCode, '本部署未开放注册：账号由管理员在「用户」页创建'))
+  app.post('/auth/register', async (req, reply) => {
+    const settings = stores.settings
+    const users = stores.users
+    if (!users) return unavailable(reply, '账号存储未接')
+    // 开关：register_enabled=false ⇒ 关闭注册（默认 true，与 Go 的 seed 一致）
+    if (settings && !settings.getBool('register_enabled', true)) {
+      reply.code(403).send(fail(config.errorCode, '注册已关闭：账号由管理员在「用户」页创建'))
+      return
+    }
+    const b = (req.body ?? {}) as { username?: string; password?: string; email?: string; nickname?: string }
+    const username = (b.username ?? '').trim().toLowerCase()
+    const email = (b.email ?? '').trim().toLowerCase()
+    if (!username || !b.password) {
+      reply.code(400).send(fail(config.errorCode, '缺少用户名或密码'))
+      return
+    }
+    if (email && !emailAllowed(email, settings)) {
+      reply.code(400).send(fail(config.errorCode, '该邮箱域名不允许注册'))
+      return
+    }
+    if (users.byUsernameOrEmail(username) || (email && users.byUsernameOrEmail(email))) {
+      reply.code(400).send(fail(config.errorCode, '用户名或邮箱已被占用'))
+      return
+    }
+    // 默认角色 / 默认套餐：都来自设置项（填的 code 不存在就回退到 user / 免费版）
+    const roleCode = (settings?.get('default_role') ?? 'user').trim() || 'user'
+    const planCode = (settings?.get('default_quota_plan') ?? 'free').trim() || 'free'
+    const plan = stores.plans?.list().find((p) => p.code === planCode) ?? stores.plans?.list()[0]
+    const roles = roleCode === 'admin' ? ['user'] : [roleCode] // 注册入口不允许自封管理员
+    let created
+    try {
+      created = users.create({
+        username,
+        password: b.password,
+        ...(b.nickname ? { nickname: b.nickname } : {}),
+        ...(email ? { email } : {}),
+        ...(plan ? { planId: plan.id } : {}),
+        roles,
+      })
+    } catch (e) {
+      reply.code(400).send(fail(config.errorCode, e instanceof Error ? e.message : '注册失败'))
+      return
+    }
+    // 面板注册后直接 setToken(data.token) —— 与登录同形状
+    const { token, expires_at, jti } = issueToken({ id: created.id, username: created.username }, config)
+    stores.sessions?.create(created.id, jti, expires_at, req.ip, String(req.headers['user-agent'] ?? ''))
+    return ok({ token, expires_at, user: created })
   })
   app.post('/auth/forgot-password', async (_req, reply) => unavailable(reply, '找回密码（需邮件/短信通道）'))
   app.post('/auth/quota-cycle', async (_req, reply) => unavailable(reply, '额度周期切换（属额度域）'))
