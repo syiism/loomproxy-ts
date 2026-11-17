@@ -28,6 +28,7 @@ export type RouteDeps = {
   sourceGroups?: ApiStores['sourceGroups']
   nameCache?: ApiStores['nameCache']
   schedules?: ApiStores['schedules']
+  kv?: ApiStores['kv']
 }
 
 export function registerControlRoutes(app: FastifyInstance, deps: RouteDeps): void {
@@ -49,6 +50,7 @@ export function registerControlRoutes(app: FastifyInstance, deps: RouteDeps): vo
     ...(deps.sourceGroups ? { sourceGroups: deps.sourceGroups } : {}),
     ...(deps.nameCache ? { nameCache: deps.nameCache } : {}),
     ...(deps.schedules ? { schedules: deps.schedules } : {}),
+    ...(deps.kv ? { kv: deps.kv } : {}),
   }
   registerSourceRoutes(app, { config: deps.config, host: deps.host, dataSources: deps.dataSources, stores })
   registerAuthRoutes(app, { config: deps.config, stores })

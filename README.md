@@ -92,6 +92,23 @@ Node 24 直接跑 `.ts`（type stripping），所以**用例不需要构建**；
 | `FQ_SESSION_POOL` | `DATA_DIR/_runtime/fq_novel/fq-sessions.json` | 设备会话池。首次运行从协议树拷一份种子（5 台已注册设备）；**刻意不放 `DATA_DIR/fq_novel/`**，否则 `/data` 会把它当成静态字典列出来 |
 | `FQ_POOL_MAX` | `5` | 协议层自己的会话池上限 |
 
+## 管理员口令（重启后 env 里的口令还算不算数）
+
+`ADMIN_USERNAME` / `ADMIN_PASSWORD` 只在**创建**管理员时用；库里的哈希属于谁，由 `kv_state` 里
+`admin_password_source:<名字>` 记着（`generated` / `env` / `panel`）：
+
+| 上次来源 | 这次 env 有口令 | 启动行为 |
+|---|---|---|
+| 无（首启） | 无 | 随机生成并打印到启动日志（只出现这一次） |
+| 无（首启） | 有 | 用 env 创建，标记 `env` |
+| `generated` | 有 | **按 env 重置**（随机口令多半没人抄下来，env 是更好的来源） |
+| `env` | 与库中一致 | 不动 |
+| `env` | 与库中不一致 | 只告警（可能面板改过），不覆盖 |
+| `panel`（面板改过） | 任意 | 以面板为准；要强制以 env 为准设 `ADMIN_PASSWORD_SYNC=true` |
+
+另外启动日志会打印 `数据库 <路径>　管理员 <名字>`——**DB 路径是相对 cwd 的**（`DATA_DIR`/`DB_PATH`），
+换目录启动等于换了一个库，症状是"怎么登都错"，先看这一行。
+
 本插件只做两件事：调协议层的 4 个模块 + 把结果映射成 legado DTO（`src/normalize.ts` 是唯一"源专属知识"）。
 
 **已知未接**（都在 ③④ 的设计里，属后续工作，不是缺陷）：

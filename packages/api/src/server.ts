@@ -7,6 +7,7 @@ import type {
   ApiKeyStore,
   DbBlockedIPs,
   DbDevices,
+  DbKv,
   DbNameCache,
   DbSchedules,
   DbQuotaExtra,
@@ -47,6 +48,7 @@ export type ApiDeps = {
   devices?: DbDevices
   nameCache?: DbNameCache
   schedules?: DbSchedules
+  kv?: DbKv
   quotaExtra?: DbQuotaExtra
   sourceGroups?: DbSourceGroups
   ledger?: Ledger
@@ -93,6 +95,7 @@ export function buildServer(deps: ApiDeps): FastifyInstance {
     ...(deps.devices ? { devices: deps.devices } : {}),
     ...(deps.nameCache ? { nameCache: deps.nameCache } : {}),
     ...(deps.schedules ? { schedules: deps.schedules } : {}),
+    ...(deps.kv ? { kv: deps.kv } : {}),
   })
   registerWebRoutes(app, { webDir: deps.config.webDist, logger: deps.logger })
 

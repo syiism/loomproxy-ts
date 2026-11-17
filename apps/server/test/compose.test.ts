@@ -142,3 +142,50 @@ test('登录 → 明细：一次数据面请求会被记进历史页（带 plugi
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('管理员口令：首启随机生成 → 写进 env 重启即生效；面板改过则以面板为准', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'loomproxy-adminpw-'))
+  const base = {
+    PLUGIN_DIR: join(root, 'plugins'),
+    DATA_DIR: join(root, 'data'),
+    JWT_SECRET: 'x'.repeat(32),
+  }
+  const attempt = async (extra: Record<string, string>, username: string, password: string) => {
+    const c = await compose({ env: { ...base, ...extra }, logger: silentLogger() })
+    const res = await c.app.inject({ method: 'POST', url: '/auth/login', payload: { username, password } })
+    await c.app.close()
+    return res.statusCode
+  }
+  try {
+    // 首启没有 ADMIN_PASSWORD：随机生成（只出现在启动日志里）
+    assert.equal(await attempt({}, 'admin', 'whatever'), 401)
+    // 把口令写进 env 再重启：这一次必须生效（现场 2026-11-17 就是卡在这条）
+    assert.equal(await attempt({ ADMIN_PASSWORD: 'env-pass' }, 'admin', 'env-pass'), 200)
+    // 再重启一次仍然可用（口令来源标记 env）
+    assert.equal(await attempt({ ADMIN_PASSWORD: 'env-pass' }, 'admin', 'env-pass'), 200)
+
+    // 面板上改过密码 ⇒ 标记 panel；重启时 env 不再覆盖
+    {
+      const c = await compose({ env: { ...base, ADMIN_PASSWORD: 'env-pass' }, logger: silentLogger() })
+      const login = await c.app.inject({ method: 'POST', url: '/auth/login', payload: { username: 'admin', password: 'env-pass' } })
+      const token = (login.json() as { data: { token: string } }).data.token
+      const ch = await c.app.inject({
+        method: 'POST',
+        url: '/auth/password',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { old_password: 'env-pass', new_password: 'panel-pass' },
+      })
+      assert.equal(ch.statusCode, 200)
+      await c.app.close()
+    }
+    assert.equal(await attempt({ ADMIN_PASSWORD: 'env-pass' }, 'admin', 'env-pass'), 401, 'env 旧口令不该复活')
+    assert.equal(await attempt({ ADMIN_PASSWORD: 'env-pass' }, 'admin', 'panel-pass'), 200, '面板口令继续有效')
+    // 运维明确要求以 env 为准时才强制覆盖
+    assert.equal(
+      await attempt({ ADMIN_PASSWORD: 'env-pass', ADMIN_PASSWORD_SYNC: 'true' }, 'admin', 'env-pass'),
+      200,
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

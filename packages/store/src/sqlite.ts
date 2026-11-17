@@ -222,6 +222,11 @@ CREATE TABLE IF NOT EXISTS source_schedules (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS kv_state (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS name_cache (
   kind TEXT NOT NULL,
   source TEXT NOT NULL,

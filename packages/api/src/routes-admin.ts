@@ -171,6 +171,8 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
       return
     }
     stores.users?.setPassword(Number(id), b.new_password)
+    const target = stores.users?.byId(Number(id))
+    if (target) stores.kv?.set(`admin_password_source:${target.username}`, 'panel')
     return ok({})
   })
 

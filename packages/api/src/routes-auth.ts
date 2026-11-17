@@ -115,6 +115,8 @@ export function registerAuthRoutes(app: FastifyInstance, deps: Deps): void {
       return
     }
     stores.users.setPassword(me.id.userId!, body.new_password)
+    // 面板上改过 → 标记 panel：重启时不再用 env 的口令覆盖（除非 ADMIN_PASSWORD_SYNC=true）
+    stores.kv?.set(`admin_password_source:${me.view.username}`, 'panel')
     // 改密后把其它会话踢掉（本会话保留，避免"改完密码自己被登出"）
     const jti = jtiOf(req, config)
     if (jti) stores.sessions?.revokeOthers(me.id.userId!, jti)

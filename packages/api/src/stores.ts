@@ -4,6 +4,7 @@ import type {
   ApiKeyStore,
   DbBlockedIPs,
   DbDevices,
+  DbKv,
   DbNameCache,
   DbSchedules,
   DbQuotaExtra,
@@ -34,6 +35,7 @@ export type ApiStores = {
   devices?: DbDevices
   nameCache?: DbNameCache
   schedules?: DbSchedules
+  kv?: DbKv
   quotaExtra?: DbQuotaExtra
   sourceGroups?: DbSourceGroups
 }

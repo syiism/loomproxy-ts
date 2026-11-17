@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { TtlCache, Upstream, createLogger, loadConfig, type Config, type Logger } from '@loomproxy/kernel'
 import {
+  DbKv,
   seedBuiltinSettings,
   DbApiKeys,
   DbCallLogs,
@@ -54,6 +55,7 @@ export type Composed = {
   devices: DbDevices
   nameCache: DbNameCache
   schedules: DbSchedules
+  kv: DbKv
   quotaExtra: DbQuotaExtra
   sourceGroups: DbSourceGroups
 }
@@ -101,22 +103,49 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
   }
   const defaultPlan = plans.list()[0] ?? // 与内置设置 default_quota_plan=free 对齐（否则"新用户默认套餐"这个键指向一个不存在的 code）
     plans.create({ name: '免费版', code: 'free', description: '默认套餐' })
+  // ---- 管理员口令：来源标记决定了"重启后 env 里的密码还算不算数" ----
+  // 现场（2026-11-17）：首启没写 ADMIN_PASSWORD → 随机生成并打印；之后把密码写进 .env 再重启，
+  // 因为"已存在就不动"，env 里的密码永远不生效，登录一直失败。分不清来源就会这么猜。
+  const kv = new DbKv(db)
   const adminName = (env['ADMIN_USERNAME'] ?? 'admin').trim().toLowerCase()
-  const generated = !env['ADMIN_PASSWORD'] ? randomBytes(9).toString('base64url') : ''
-  const adminPass = env['ADMIN_PASSWORD'] ?? generated
-  if (!users.byUsernameOrEmail(adminName)) {
+  const envPass = env['ADMIN_PASSWORD'] ?? ''
+  const forceSync = ['1', 'true', 'yes', 'on'].includes(String(env['ADMIN_PASSWORD_SYNC'] ?? '').toLowerCase())
+  const existing = users.byUsernameOrEmail(adminName)
+  if (!existing) {
+    const generated = envPass ? '' : randomBytes(9).toString('base64url')
     users.create({
       username: adminName,
-      password: adminPass,
+      password: envPass || generated,
       nickname: adminName,
       planId: defaultPlan.id,
       roles: ['admin'],
     })
-    if (generated) logger.warn(`已创建管理员 ${adminName}，本次生成的登录密码是：${generated}`)
-    else logger.info(`已创建管理员 ${adminName}`)
-  } else if (generated) {
-    logger.warn(`管理员 ${adminName} 已存在；ADMIN_PASSWORD 未设置时不会重置已有密码`)
+    kv.set(`admin_password_source:${adminName}`, envPass ? 'env' : 'generated')
+    if (generated) logger.warn(`已创建管理员 ${adminName}，本次生成的登录密码是：${generated}（写进 .env 的 ADMIN_PASSWORD 后重启即生效）`)
+    else logger.info(`已创建管理员 ${adminName}（口令来自 ADMIN_PASSWORD）`)
+  } else {
+    const source = kv.get(`admin_password_source:${adminName}`) || 'unknown'
+    const envMatches = envPass !== '' && users.verify(adminName, envPass) !== undefined
+    if (forceSync && envPass && !envMatches) {
+      users.setPassword(existing.id, envPass)
+      kv.set(`admin_password_source:${adminName}`, 'env')
+      logger.warn(`ADMIN_PASSWORD_SYNC=true：管理员 ${adminName} 的口令已按 env 重置（覆盖了此前的值）`)
+    } else if (source === 'generated' && envPass) {
+      // 上次是随机生成的口令（可能只出现在一次启动日志里）→ env 是更好的来源，直接接管
+      users.setPassword(existing.id, envPass)
+      kv.set(`admin_password_source:${adminName}`, 'env')
+      logger.warn(`管理员 ${adminName} 的口令已按 env 的 ADMIN_PASSWORD 重置（此前是启动时随机生成的）`)
+    } else if (source === 'panel') {
+      logger.info(`管理员 ${adminName} 的口令以面板为准（面板上改过）；如需用 env 覆盖：ADMIN_PASSWORD_SYNC=true`)
+    } else if (envPass && !envMatches) {
+      logger.warn(
+        `ADMIN_PASSWORD 与库中口令不一致（管理员 ${adminName}）。可能是面板上改过；要强制以 env 为准：ADMIN_PASSWORD_SYNC=true`,
+      )
+    } else if (!envPass) {
+      logger.warn(`未设置 ADMIN_PASSWORD：管理员 ${adminName} 沿用库中口令（忘了就设 ADMIN_PASSWORD_SYNC=true 再重启）`)
+    }
   }
+  logger.info(`数据库 ${dbPath}　管理员 ${adminName}`)
   // hashPassword 在播种之外也要可用（改密走 users.setPassword）
   void hashPassword
 
@@ -165,8 +194,9 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
     devices,
     nameCache,
     schedules,
+    kv,
     quotaExtra,
     sourceGroups,
   })
-  return { config, app, db, host, registry, settings, dataSources, users, roles, plans, sessions, apiKeys, callLogs, quota, sourceConfigs, blockedIPs, devices, nameCache, schedules, quotaExtra, sourceGroups }
+  return { config, app, db, host, registry, settings, dataSources, users, roles, plans, sessions, apiKeys, callLogs, quota, sourceConfigs, blockedIPs, devices, nameCache, schedules, kv, quotaExtra, sourceGroups }
 }
