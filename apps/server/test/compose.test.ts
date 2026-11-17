@@ -226,3 +226,42 @@ test('健康检查在 /health；/ 与 /* 是面板；/panel* 301 到根', async 
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('文档导航 vs API：面板页给 HTML，API 给 JSON；report.html 未登录 302 到登录', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'loomproxy-doc-'))
+  try {
+    const webDir = join(root, 'dist')
+    mkdirSync(webDir, { recursive: true })
+    writeFileSync(join(webDir, 'index.html'), '<!doctype html><div id="app"></div>')
+    const v = join(root, 'plugins', 'p_one', '1.0.0')
+    mkdirSync(v, { recursive: true })
+    writeFileSync(join(v, 'manifest.json'), JSON.stringify({ sdk_version: '^1', entry: './index.mjs',
+      meta: { code: 'p_one', display: 'P1', category: 'p', actions: ['search'] } }))
+    writeFileSync(join(v, 'index.mjs'), `export default { handlers: { search: async () => ({ bookList: [] }) } }`)
+    const { app } = await compose({
+      env: { PLUGIN_DIR: join(root, 'plugins'), DATA_DIR: join(root, 'data'), WEB_DIST: webDir, ADMIN_PASSWORD: 'pw' },
+      logger: silentLogger(),
+    })
+
+    // 面板页（同时也是 API 的路径）：浏览器文档导航 → HTML；fetch（通配 Accept）→ JSON
+    const doc = await app.inject({ method: 'GET', url: '/admin/monitor', headers: { accept: 'text/html,*/*;q=0.8' } })
+    assert.equal(doc.statusCode, 200)
+    assert.match(doc.headers['content-type'] ?? '', /text\/html/)
+    const fetchReq = await app.inject({ method: 'GET', url: '/admin/monitor', headers: { accept: '*/*' } })
+    assert.equal(fetchReq.statusCode, 403, '未登录的 API 调用仍是 403 JSON')
+
+    // 显式文档端点：未登录 302 到登录（不是把 JSON 甩给浏览器）
+    const report = await app.inject({ method: 'GET', url: '/admin/monitor/report.html', headers: { accept: 'text/html' } })
+    assert.equal(report.statusCode, 302)
+    assert.match(report.headers['location'] ?? '', /^\/login\?next=/)
+
+    // /datasources 两副面孔
+    const dsDoc = await app.inject({ method: 'GET', url: '/datasources', headers: { accept: 'text/html' } })
+    assert.match(dsDoc.headers['content-type'] ?? '', /text\/html/)
+    const dsApi = await app.inject({ method: 'GET', url: '/datasources', headers: { accept: 'application/json' } })
+    assert.match(dsApi.headers['content-type'] ?? '', /application\/json/)
+    await app.close()
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

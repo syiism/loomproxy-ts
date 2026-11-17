@@ -20,6 +20,14 @@ async function requireAdmin(req: FastifyRequest, reply: FastifyReply, deps: Deps
     ...(deps.stores.users ? { users: deps.stores.users } : {}),
   })
   if (!id.roles.includes('admin')) {
+    // 浏览器直接打开一个"要管理员的文档"（如 report.html）时，302 到登录比甩 JSON 有用；
+    // 面板的 fetch 不会带 text/html，所以接口语义不变。
+    if (String(req.headers.accept ?? '').includes('text/html')) {
+      const next = encodeURIComponent(req.url)
+      reply.code(302).header('location', `/login?next=${next}`)
+      reply.send()
+      return undefined
+    }
     reply.code(403).send(fail(deps.config.errorCode, '需要管理员权限'))
     return undefined
   }

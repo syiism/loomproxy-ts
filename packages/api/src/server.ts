@@ -27,7 +27,7 @@ import { Ledger, RateLimiter } from '@loomproxy/gate'
 import type { Pool } from '@loomproxy/pool'
 import { callMetaOf, toCallLogRow } from './calls.ts'
 import { createDispatcher } from './dispatch.ts'
-import { registerWebRoutes } from './web.ts'
+import { isPanelDocument, registerWebRoutes } from './web.ts'
 import { registerControlRoutes } from './routes.ts'
 
 export type ApiDeps = {
@@ -101,6 +101,16 @@ export function buildServer(deps: ApiDeps): FastifyInstance {
     ...(deps.pools ? { pools: deps.pools } : {}),
   })
   const spaFallback = registerWebRoutes(app, { webDir: deps.config.webDist, logger: deps.logger })
+
+  // 文档导航优先给面板：`/admin/monitor`、`/datasources` 这类路径同时也是 API，
+  // 浏览器刷新页面时不该看到一坨 JSON（面板自己的 fetch 不带 text/html，所以 API 不受影响）
+  app.addHook('onRequest', async (req, reply) => {
+    if (req.method !== 'GET') return
+    const path = (req.url.split('?')[0] ?? '') as string
+    if (!isPanelDocument(path, req.headers.accept)) return
+    await spaFallback(req, reply)
+    return reply
+  })
 
   const dispatch = createDispatcher({
     config: deps.config,

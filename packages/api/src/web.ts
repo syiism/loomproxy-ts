@@ -22,6 +22,53 @@ const MIME: Record<string, string> = {
 
 export type WebDeps = { webDir: string; logger: Logger }
 
+/**
+ * 面板路由清单（前端 router 的那份的镜像）。为什么需要它：
+ * 面板挪到根之后，`/admin/monitor`、`/admin/users`、`/datasources` 这些**既是 API 又是面板页**。
+ * 区分靠请求意图：浏览器地址栏/刷新发 text/html，面板自己的 fetch 发通配或 json。
+ * —— 文档导航命中这张表就给面板；API 调用照旧给 JSON。
+ * （注意：注释里别写星号斜杠连写，它会提前结束块注释——这一次就是被它咬到的）
+ */
+export const PANEL_PATHS = new Set([
+  '/',
+  '/login',
+  '/register',
+  '/forgot-password',
+  '/dashboard',
+  '/ranking',
+  '/datasources',
+  '/profile',
+  '/404',
+  '/admin',
+  '/admin/users',
+  '/admin/roles',
+  '/admin/quotas',
+  '/admin/redeem-codes',
+  '/admin/datasources',
+  '/admin/interfaces',
+  '/admin/usage-logs',
+  '/admin/monitor',
+  '/admin/pools',
+  '/admin/blocked-ips',
+  '/admin/devices',
+  '/admin/settings',
+  '/admin/plugins',
+])
+
+/** 是不是"浏览器要一个页面"：Accept 里有 text/html，且路径是上面那张表里的（或表里的子路径） */
+export function isPanelDocument(path: string, accept: string | undefined): boolean {
+  if (!String(accept ?? '').includes('text/html')) return false
+  const clean = path.split('?')[0] ?? path
+  // 显式的文档端点（如 /admin/monitor/report.html）自己就是一张页面，别被面板清单吞掉：
+  // 它要按自己的鉴权走（没登录 → 302 到 /login?next=…）
+  if (clean.endsWith('.html')) return false
+  if (PANEL_PATHS.has(clean)) return true
+  for (const p of PANEL_PATHS) {
+    if (p !== '/' && clean.startsWith(`${p}/`)) return true
+  }
+  return false
+}
+
 /** 面板入口：返回"读文件 + SPA 回退"的处理器（`/`、`/*`、`/assets/*` 与 dispatcher 的浏览器回退共用） */
 export type SpaHandler = (req: { url: string }, reply: FastifyReply) => Promise<void>
 
