@@ -112,6 +112,12 @@ export function registerControlRoutes(app: FastifyInstance, deps: ControlDeps): 
     return { code: 0, msg: 'ok', count: data.length, data }
   })
 
+  // 验证码：本部署未接短信/邮件通道 → scenes 为空，面板据此隐藏输入框（不是报错）
+  app.get('/verify/config', async () => ok({ scenes: [] }))
+  app.post('/verify/send', async (_req, reply) => {
+    reply.code(501).send(fail(config.errorCode, '本部署未开启验证码通道（验证码需短信/邮件服务）'))
+  })
+
   app.get('/announcement', async () => ok({ content: deps.stores?.settings?.get('announcement') ?? '', maintenance: false }))
 
   const serveData = async (req: FastifyRequest, reply: FastifyReply) => {

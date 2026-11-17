@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS data_sources (
   sort_order INTEGER NOT NULL DEFAULT 0,
   status INTEGER NOT NULL DEFAULT 1,
   media_type TEXT,
+  group_id INTEGER,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -161,6 +162,79 @@ CREATE TABLE IF NOT EXISTS quota_costs (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE (group_code, "interface")
+);
+CREATE TABLE IF NOT EXISTS quota_cost_plans (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  plan_id INTEGER NOT NULL,
+  group_code TEXT NOT NULL,
+  "interface" TEXT NOT NULL,
+  interval INTEGER NOT NULL DEFAULT 0,
+  limit_count INTEGER NOT NULL DEFAULT 0,
+  window_sec INTEGER NOT NULL DEFAULT 60,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (plan_id, group_code, "interface")
+);
+CREATE TABLE IF NOT EXISTS quota_transfer_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  username TEXT NOT NULL DEFAULT '',
+  operator TEXT NOT NULL DEFAULT '',
+  from_code TEXT NOT NULL,
+  to_code TEXT NOT NULL,
+  amount INTEGER NOT NULL,
+  from_before INTEGER NOT NULL,
+  from_after INTEGER NOT NULL,
+  to_before INTEGER NOT NULL,
+  to_after INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  deleted_at TEXT
+);
+CREATE TABLE IF NOT EXISTS redeem_codes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT NOT NULL UNIQUE,
+  batch_no TEXT NOT NULL DEFAULT '',
+  plan_id INTEGER NOT NULL,
+  plan_name TEXT NOT NULL DEFAULT '',
+  status INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  used_at TEXT,
+  used_by INTEGER
+);
+CREATE TABLE IF NOT EXISTS source_groups (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  status INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS source_schedules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  data_source_id INTEGER NOT NULL,
+  mode TEXT NOT NULL DEFAULT 'daily',
+  start_clock TEXT NOT NULL DEFAULT '',
+  end_clock TEXT NOT NULL DEFAULT '',
+  start_at TEXT,
+  duration_min INTEGER NOT NULL DEFAULT 0,
+  status INTEGER NOT NULL DEFAULT 1,
+  applied INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS name_cache (
+  kind TEXT NOT NULL,
+  source TEXT NOT NULL,
+  ident TEXT NOT NULL,
+  name TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (kind, source, ident)
+);
+CREATE TABLE IF NOT EXISTS blocked_ips (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ip TEXT NOT NULL UNIQUE,
+  reason TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS platform_source_configs (
   source_name TEXT PRIMARY KEY,

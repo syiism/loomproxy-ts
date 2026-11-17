@@ -8,14 +8,15 @@
     "node": ">=24.0.0"
   },
   "scripts": {
-    "check": "pnpm run check:layers && pnpm run check:types && pnpm run check:web && pnpm run test",
+    "check": "pnpm run check:layers && pnpm run check:types && pnpm run check:web && pnpm run check:web-contract && pnpm run test",
     "check:layers": "node tools/check-layers.mjs",
     "check:types": "tsc -p tsconfig.json",
     "test": "node --test \"packages/*/test/*.test.ts\" \"packages/plugins/*/test/*.test.ts\" \"apps/*/test/*.test.ts\"",
     "dev": "node --watch apps/server/src/main.ts",
     "probe:fq": "node tools/plugin-run.mjs fq_novel search query=三体",
     "check:web": "pnpm -F @loomproxy/web build",
-    "dev:web": "pnpm -F @loomproxy/web dev"
+    "dev:web": "pnpm -F @loomproxy/web dev",
+    "check:web-contract": "node tools/check-web-contract.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.19.0",

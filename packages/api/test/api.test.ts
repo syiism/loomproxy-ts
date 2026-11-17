@@ -7,8 +7,12 @@ import { loadConfig, silentLogger, Upstream } from '@loomproxy/kernel'
 import { SourceRegistry } from '@loomproxy/source-kit'
 import {
   DbApiKeys,
+  DbBlockedIPs,
   DbCallLogs,
+  DbDevices,
   DbQuota,
+  DbQuotaExtra,
+  DbSourceGroups,
   DbDataSources,
   DbPlans,
   DbRoles,
@@ -89,6 +93,10 @@ async function makeApp() {
   const apiKeys = new DbApiKeys(db)
   const callLogs = new DbCallLogs(db)
   const quota = new DbQuota(db)
+  const sourceGroups = new DbSourceGroups(db, quota)
+  const quotaExtra = new DbQuotaExtra(db, quota)
+  const blockedIPs = new DbBlockedIPs(db)
+  const devices = new DbDevices(db)
   for (const r of [
     { code: 'admin', name: '管理员', description: '' },
     { code: 'user', name: '用户', description: '' },
@@ -100,9 +108,9 @@ async function makeApp() {
   users.create({ username: 'u', password: 'u-pass', planId: plan.id, roles: ['user'] })
   const app = buildServer({
     config, logger, upstream, host, dataSources, settings, limiter,
-    users, roles, plans, sessions, apiKeys, callLogs, quota,
+    users, roles, plans, sessions, apiKeys, callLogs, quota, quotaExtra, sourceGroups, blockedIPs, devices,
   })
-  return { app, root, config, host, callLogs, users, quota, plans }
+  return { app, root, config, host, callLogs, users, quota, plans, quotaExtra, blockedIPs, dataSources }
 }
 
 const adminToken = () => signToken({ user_id: 1, username: 'admin', roles: ['admin'] }, SECRET)
@@ -407,6 +415,64 @@ test('额度域：授权即限额、超了 429、成功记账进流水（一次�
     assert.equal(card.remaining, 0)
     assert.equal(card.usage_pct, 100)
     assert.match(card.next_reset, /^\d{4}\/\d{1,2}\/\d{1,2} \d{2}:\d{2}:00$/)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('黑名单：数据面入口直接 403（与登录共用一张表）', async () => {
+  const { app, root, blockedIPs } = await makeApp()
+  try {
+    blockedIPs.add('127.0.0.1', 'test')
+    const res = await app.inject({ method: 'GET', url: '/demo_one/search?key=x', headers: { authorization: `Bearer ${userToken()}` } })
+    assert.equal(res.statusCode, 403)
+    assert.match((res.json() as { msg: string }).msg, /IP 已被拉黑/)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('额度转移：两个已授权源之间重排日限额，流水一行、覆盖增量立刻生效', async () => {
+  const { app, root, quota, plans, dataSources } = await makeApp()
+  try {
+    // 造第二个源（同一条装配路径：插件 upsert 的等价物）
+    dataSources.upsert({
+      code: 'demo_two',
+      display: '演示二号',
+      category: 'demo',
+      sort_order: 2,
+      status: 1,
+      actions: ['search'],
+      fixed_base_url: false,
+    })
+    const plan = plans.list()[0]!
+    quota.grant(plan.id, 'source', 'demo_one', 10)
+    quota.grant(plan.id, 'source', 'demo_two', 5)
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/quota/transfer',
+      headers: { authorization: `Bearer ${userToken()}` },
+      payload: { from: 'demo_one', to: 'demo_two', amount: 3 },
+    })
+    assert.equal(res.statusCode, 200)
+    const row = (res.json() as { data: { from_after: number; to_after: number; amount: number } }).data
+    assert.equal(row.from_after, 7)
+    assert.equal(row.to_after, 8)
+
+    const hist = await app.inject({ method: 'GET', url: '/quota/transfers', headers: { authorization: `Bearer ${userToken()}` } })
+    const page = (hist.json() as { data: { total: number; list: Array<{ amount: number }> } }).data
+    assert.equal(page.total, 1)
+    assert.equal(page.list[0]?.amount, 3)
+
+    // 覆盖增量写进 user_quota_overrides，所以总额变了但总数守恒（10+5 = 7+8）
+    assert.equal(quota.effectiveLimit(2, plan.id, 'demo_one'), 7)
+    assert.equal(quota.effectiveLimit(2, plan.id, 'demo_two'), 8)
+
+    const cleared = await app.inject({ method: 'DELETE', url: '/quota/transfers', headers: { authorization: `Bearer ${userToken()}` } })
+    assert.equal((cleared.json() as { data: { cleared: number } }).data.cleared, 1)
   } finally {
     await app.close()
     rmSync(root, { recursive: true, force: true })

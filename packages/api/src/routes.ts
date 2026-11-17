@@ -22,6 +22,12 @@ export type RouteDeps = {
   callLogs?: ApiStores['callLogs']
   quota?: ApiStores['quota']
   sourceConfigs?: ApiStores['sourceConfigs']
+  blockedIPs?: ApiStores['blockedIPs']
+  devices?: ApiStores['devices']
+  quotaExtra?: ApiStores['quotaExtra']
+  sourceGroups?: ApiStores['sourceGroups']
+  nameCache?: ApiStores['nameCache']
+  schedules?: ApiStores['schedules']
 }
 
 export function registerControlRoutes(app: FastifyInstance, deps: RouteDeps): void {
@@ -37,6 +43,12 @@ export function registerControlRoutes(app: FastifyInstance, deps: RouteDeps): vo
     ...(deps.callLogs ? { callLogs: deps.callLogs } : {}),
     ...(deps.quota ? { quota: deps.quota } : {}),
     ...(deps.sourceConfigs ? { sourceConfigs: deps.sourceConfigs } : {}),
+    ...(deps.blockedIPs ? { blockedIPs: deps.blockedIPs } : {}),
+    ...(deps.devices ? { devices: deps.devices } : {}),
+    ...(deps.quotaExtra ? { quotaExtra: deps.quotaExtra } : {}),
+    ...(deps.sourceGroups ? { sourceGroups: deps.sourceGroups } : {}),
+    ...(deps.nameCache ? { nameCache: deps.nameCache } : {}),
+    ...(deps.schedules ? { schedules: deps.schedules } : {}),
   }
   registerSourceRoutes(app, { config: deps.config, host: deps.host, dataSources: deps.dataSources, stores })
   registerAuthRoutes(app, { config: deps.config, stores })

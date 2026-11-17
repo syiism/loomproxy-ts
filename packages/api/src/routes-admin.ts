@@ -6,6 +6,7 @@ import { fail, ok } from '@loomproxy/contract'
 import { clampPage, clampPageSize } from '@loomproxy/kernel'
 import type { Config } from '@loomproxy/kernel'
 import { resolveIdentity } from './auth.ts'
+import { resetAttempts, snapshot } from './login-limiter.ts'
 import type { DataSourceStore } from '@loomproxy/store'
 import type { SourceHost } from '@loomproxy/source-host'
 import { notWired, type ApiStores } from './stores.ts'
@@ -229,8 +230,38 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
     return ok({})
   })
 
-  app.get('/admin/users/:id/quota-transfers', async (_req, reply) => unavailable(reply, '额度转移记录（转移模型未接）'))
-  app.post('/admin/users/:id/quota-transfer', async (_req, reply) => unavailable(reply, '管理员代转额度（转移模型未接）'))
+  app.get('/admin/users/:id/quota-transfers', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const { id } = req.params as { id: string }
+    const qs = req.query as Record<string, string>
+    return ok(
+      stores.quotaExtra?.transfers({ userId: Number(id), page: clampPage(qs['page']), pageSize: clampPageSize(qs['page_size']) }) ??
+        { total: 0, page: 1, page_size: 20, list: [] },
+    )
+  })
+  app.post('/admin/users/:id/quota-transfer', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const { id } = req.params as { id: string }
+    const b = (req.body ?? {}) as { from?: string; to?: string; amount?: number }
+    const extra = stores.quotaExtra
+    if (!extra) return unavailable(reply, '额度转移存储未接')
+    const target = stores.users?.byId(Number(id))
+    const me = await resolveIdentity(req, config, deps.stores ?? {})
+    try {
+      const row = extra.transfer({
+        userId: Number(id),
+        username: target?.username ?? `#${id}`,
+        operator: me.username ?? 'admin',
+        from: b.from ?? '',
+        to: b.to ?? '',
+        amount: b.amount ?? 0,
+        planId: target?.plan_id ?? null,
+      })
+      return ok(row)
+    } catch (e) {
+      reply.code(400).send(fail(config.errorCode, e instanceof Error ? e.message : '转移失败'))
+    }
+  })
 
   // ---- 角色 ----
   app.get('/admin/roles', async (req, reply) => {
@@ -462,14 +493,103 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
     return ok({})
   })
 
-  // 分组 / 定时 / 榜单可见：未接
-  for (const path of ['/admin/source-groups', '/admin/source-groups/:id', '/admin/source-schedules', '/admin/source-schedules/:id', '/admin/source-groups/:id/members', '/admin/source-groups/:id/apply-limits']) {
-    app.get(path, async (_req, reply) => unavailable(reply, '数据源默认地址/分组/定时'))
-    app.put(path, async (_req, reply) => unavailable(reply, '数据源默认地址/分组/定时'))
-    app.post(path, async (_req, reply) => unavailable(reply, '数据源默认地址/分组/定时'))
-    app.patch(path, async (_req, reply) => unavailable(reply, '数据源默认地址/分组/定时'))
-    app.delete(path, async (_req, reply) => unavailable(reply, '数据源默认地址/分组/定时'))
-  }
+  // ---- 数据源分组（视图 + 批量授权单位，不参与键控） ----
+  app.get('/admin/source-groups', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    return ok(stores.sourceGroups?.list() ?? [])
+  })
+  app.post('/admin/source-groups', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const b = (req.body ?? {}) as { name?: string; sort_order?: number }
+    if (!b.name) {
+      reply.code(400).send(fail(config.errorCode, '缺少分组名'))
+      return
+    }
+    const groups = stores.sourceGroups
+    if (!groups) return unavailable(reply, '分组存储未接')
+    return ok(groups.create({ name: b.name, ...(b.sort_order !== undefined ? { sort_order: b.sort_order } : {}) }))
+  })
+  app.patch('/admin/source-groups/:id', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const { id } = req.params as { id: string }
+    const b = (req.body ?? {}) as { name?: string; sort_order?: number; status?: number }
+    return ok(stores.sourceGroups?.update(Number(id), b) ?? {})
+  })
+  app.delete('/admin/source-groups/:id', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const { id } = req.params as { id: string }
+    stores.sourceGroups?.remove(Number(id))
+    return ok({})
+  })
+  app.put('/admin/source-groups/:id/members', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const { id } = req.params as { id: string }
+    const b = (req.body ?? {}) as { source_names?: string[] }
+    const groups = stores.sourceGroups
+    if (!groups) return unavailable(reply, '分组存储未接')
+    return ok({ moved: groups.setMembers(Number(id), b.source_names ?? []) })
+  })
+  app.post('/admin/source-groups/:id/apply-limits', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const { id } = req.params as { id: string }
+    const b = (req.body ?? {}) as { plan_id?: number; limit?: number }
+    if (!b.plan_id) {
+      reply.code(400).send(fail(config.errorCode, '缺少 plan_id'))
+      return
+    }
+    const groups = stores.sourceGroups
+    if (!groups) return unavailable(reply, '分组存储未接')
+    return ok({ applied: groups.applyLimits(Number(id), b.plan_id, b.limit ?? 0) })
+  })
+
+  // ---- 数据源定时启停（到点自动启用；窗口外的一次性规则收尾） ----
+  app.get('/admin/source-schedules', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const sched = stores.schedules
+    if (!sched) return unavailable(reply, '定时规则存储未接')
+    return ok(sched.list(config.tzOffsetHours))
+  })
+  app.post('/admin/source-schedules', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const sched = stores.schedules
+    if (!sched) return unavailable(reply, '定时规则存储未接')
+    const b = (req.body ?? {}) as {
+      source_ids?: number[]
+      mode?: 'daily' | 'once'
+      start_clock?: string
+      end_clock?: string
+      start_at?: string
+      duration_min?: number
+    }
+    if (!b.source_ids?.length) {
+      reply.code(400).send(fail(config.errorCode, '请至少选择一个数据源'))
+      return
+    }
+    const created = sched.create({
+      sourceIds: b.source_ids,
+      mode: b.mode === 'once' ? 'once' : 'daily',
+      ...(b.start_clock ? { startClock: b.start_clock } : {}),
+      ...(b.end_clock ? { endClock: b.end_clock } : {}),
+      ...(b.start_at ? { startAt: b.start_at } : {}),
+      ...(b.duration_min !== undefined ? { durationMin: b.duration_min } : {}),
+    })
+    return ok({ created })
+  })
+  app.patch('/admin/source-schedules/:id', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const sched = stores.schedules
+    if (!sched) return unavailable(reply, '定时规则存储未接')
+    const { id } = req.params as { id: string }
+    const b = (req.body ?? {}) as { start_clock?: string; end_clock?: string; start_at?: string | null; duration_min?: number; status?: number }
+    sched.update(Number(id), b)
+    return ok({})
+  })
+  app.delete('/admin/source-schedules/:id', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const { id } = req.params as { id: string }
+    stores.schedules?.remove(Number(id))
+    return ok({})
+  })
 
   // ---- 监控 ----
   app.get('/admin/monitor', async (req, reply) => {
@@ -513,10 +633,34 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
     return ok({})
   })
 
+  // 服务端现出一份独立报表（内存渲染、不落盘）：运维要能把"这一小时的读数"整页导出/发人
   app.get('/admin/monitor/report.html', async (req, reply) => {
     if (!(await guard(req, reply))) return
+    const logs = stores.callLogs as unknown as {
+      stats?: () => Array<{ source: string; action: string; total: number; success: number; failed: number; total_latency_ms: number; max_latency_ms: number }>
+    }
+    const rows = logs?.stats?.() ?? []
+    const total = rows.reduce((n, r) => n + r.total, 0)
+    const failed = rows.reduce((n, r) => n + r.failed, 0)
+    const esc = (v: unknown) => String(v).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] as string)
+    const body = rows
+      .map(
+        (r) =>
+          `<tr><td>${esc(r.source)}</td><td>${esc(r.action)}</td><td>${r.total}</td><td>${r.success}</td><td>${r.failed}</td>` +
+          `<td>${r.total ? Math.round(r.total_latency_ms / r.total) : 0}ms</td><td>${r.max_latency_ms}ms</td></tr>`,
+      )
+      .join('')
     reply.header('content-type', 'text/html; charset=utf-8')
-    return '<!doctype html><meta charset="utf-8"><title>监控报表</title><p>本 TS 部署暂未迁移服务端渲染报表，读数见「监控」页。</p>'
+    return `<!doctype html><html lang="zh-CN"><meta charset="utf-8">
+<title>LoomProxy 监控报表</title>
+<style>body{font:14px/1.6 -apple-system,"PingFang SC",sans-serif;margin:24px;color:#1f2328}
+table{border-collapse:collapse;font-size:13px}td,th{border-bottom:1px solid #e3e6ea;padding:6px 10px;text-align:left}
+h1{font-size:18px}code{font-family:ui-monospace,Menlo,monospace}</style>
+<h1>LoomProxy 监控报表</h1>
+<p>生成时间 <code>${esc(new Date().toISOString())}</code>　合计 <b>${total}</b> 次调用，失败 <b>${failed}</b> 次。</p>
+<table><thead><tr><th>数据源</th><th>接口</th><th>总数</th><th>成功</th><th>失败</th><th>平均耗时</th><th>最慢</th></tr></thead>
+<tbody>${body || '<tr><td colspan="7">暂无读数</td></tr>'}</tbody></table>
+<p style="color:#6b7280">读数来自 api_call_stats 聚合表（明细可清、聚合留）。</p></html>`
   })
 
   app.get('/admin/monitor/trend', async (req, reply) => {
@@ -526,7 +670,12 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
     const logs = stores.callLogs as unknown as { trend?: (d: number) => unknown[] }
     return ok(logs?.trend?.(days) ?? [])
   })
-  app.post('/admin/monitor/backfill-subjects', async (_req, reply) => unavailable(reply, '名称回填（需命名缓存）'))
+  app.post('/admin/monitor/backfill-subjects', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const cache = stores.nameCache as unknown as { backfill?: () => { books: number; chapters: number } }
+    if (!cache?.backfill) return unavailable(reply, '命名缓存未接')
+    return ok(cache.backfill())
+  })
 
   // ---- 号池：本轮没有池运行时（③ §9），空列表而不是假数据 ----
   app.get('/admin/pools', async (req, reply) => {
@@ -566,6 +715,33 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
     if (!(await guard(req, reply))) return
     return ok((stores.quota?.costs() ?? []).map((c) => ({ ...c, group_code: c.group_code, interface: c.interface })))
   })
+  // 套餐级接口限速：覆盖全局（面板「接口」页）
+  app.get('/admin/quota-costs/plans', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    return ok(stores.quotaExtra?.costPlans() ?? [])
+  })
+  app.post('/admin/quota-costs/plans/upsert', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const b = (req.body ?? {}) as { plan_id?: number; group_code?: string; interface?: string; interval?: number; limit_count?: number; window_sec?: number }
+    if (!b.plan_id || !b.group_code || !b.interface) {
+      reply.code(400).send(fail(config.errorCode, '缺少 plan_id/group_code/interface'))
+      return
+    }
+    const extra = stores.quotaExtra
+    if (!extra) return unavailable(reply, '套餐级限速存储未接')
+    extra.upsertCostPlan({
+      plan_id: b.plan_id, group_code: b.group_code, interface: b.interface,
+      interval: b.interval ?? 0, limit_count: b.limit_count ?? 0, window_sec: b.window_sec ?? 60,
+    })
+    return ok({})
+  })
+  app.put('/admin/quota-costs/plans/:id', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const { id } = req.params as { id: string }
+    const b = (req.body ?? {}) as { interval?: number; limit_count?: number; window_sec?: number }
+    stores.quotaExtra?.updateCostPlan(Number(id), b)
+    return ok({})
+  })
   app.put('/admin/quota-costs/:id', async (req, reply) => {
     if (!(await guard(req, reply))) return
     const { id } = req.params as { id: string }
@@ -591,6 +767,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
     const since = q?.startOfWindow(user.id, config.tzOffsetHours) ?? new Date().toISOString()
     const dayStart = q?.startOfWindow(0, config.tzOffsetHours) ?? since
 
+    const groups = stores.sourceGroups?.sections() ?? []
     const rows = (deps.dataSources?.listEnabled() ?? []).filter((ds) => {
       if (isAdmin) return true
       // 非管理员只看见"套餐里有这一行"的源（限额即授权）
@@ -610,9 +787,8 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
         id: ds.id ?? 0,
         source_code: ds.name,
         name: ds.display_name,
-        // 分组视图还没接（表都没有），一律未分组
-        group_id: 0,
-        group_name: '',
+        group_id: ds.group_id ?? 0,
+        group_name: groups.find((g) => g.id === (ds.group_id ?? 0))?.name ?? '',
         override: override ? (override.limit > 0 ? `+${override.limit}` : String(override.limit)) : '未设置',
         used_today: used,
         active_users: isAdmin ? q?.activeUsersForSource(ds.name, since) ?? 0 : 0,
@@ -639,8 +815,8 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
 
     return ok({
       sources,
-      groups: [],
-      ungrouped_count: sources.length,
+      groups: groups.map((g) => ({ id: g.id, name: g.name, sort_order: g.sort_order, count: g.count })),
+      ungrouped_count: sources.filter((s2) => (s2.group_id ?? 0) === 0).length,
       is_admin: isAdmin,
       plan_name: user.plan?.name ?? '',
       plan_code: user.plan?.code ?? '',
@@ -650,6 +826,55 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
       quota_cycle_mode: 'day',
       switch_allowed_at: null,
     })
+  })
+
+  app.post('/quota/transfer', async (req, reply) => {
+    // 只认会话（长期密钥能读自己挪过什么，不能销毁/挪用额度）
+    const id = await resolveIdentity(req, config, deps.stores ?? {})
+    if (id.userId === undefined || id.envKey) {
+      reply.code(401).send(fail(401, '额度转移只认登录会话'))
+      return
+    }
+    const b = (req.body ?? {}) as { from?: string; to?: string; amount?: number }
+    const extra = stores.quotaExtra
+    if (!extra) return unavailable(reply, '额度转移存储未接')
+    const user = stores.users?.byId(id.userId)
+    try {
+      const row = extra.transfer({
+        userId: id.userId,
+        username: user?.username ?? '',
+        operator: user?.username ?? '',
+        from: b.from ?? '',
+        to: b.to ?? '',
+        amount: b.amount ?? 0,
+        planId: user?.plan_id ?? null,
+      })
+      return ok(row)
+    } catch (e) {
+      reply.code(400).send(fail(config.errorCode, e instanceof Error ? e.message : '转移失败'))
+    }
+  })
+
+  app.get('/quota/transfers', async (req, reply) => {
+    const id = await resolveIdentity(req, config, deps.stores ?? {})
+    if (id.userId === undefined) {
+      reply.code(401).send(fail(401, '请先登录'))
+      return
+    }
+    const qs = req.query as Record<string, string>
+    return ok(
+      stores.quotaExtra?.transfers({ userId: id.userId, page: clampPage(qs['page']), pageSize: clampPageSize(qs['page_size']) }) ??
+        { total: 0, page: 1, page_size: 20, list: [] },
+    )
+  })
+
+  app.delete('/quota/transfers', async (req, reply) => {
+    const id = await resolveIdentity(req, config, deps.stores ?? {})
+    if (id.userId === undefined || id.envKey) {
+      reply.code(401).send(fail(401, '清除记录只认登录会话'))
+      return
+    }
+    return ok({ cleared: stores.quotaExtra?.clearTransfers(id.userId) ?? 0 })
   })
 
   app.get('/quota/usage-logs', async (req, reply) => {
@@ -716,26 +941,117 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
     return ok({ book_source_path: rel, ready })
   })
 
+  // ---- 安全：登录限频读数与定向解锁（内存态，与 Go 同取舍） ----
+  app.get('/admin/security/attempts', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    return ok(snapshot())
+  })
+  app.post('/admin/security/attempts/reset', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const b = (req.body ?? {}) as { ip?: string }
+    return ok({ cleared: resetAttempts(b.ip) })
+  })
+
+  // ---- IP 黑名单（登录/注册/数据面三处共用一张表） ----
+  app.get('/admin/blocked-ips', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    return ok(stores.blockedIPs?.list() ?? [])
+  })
+  app.post('/admin/blocked-ips', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const b = (req.body ?? {}) as { ip?: string; reason?: string }
+    const ip = (b.ip ?? '').trim()
+    if (!ip) {
+      reply.code(400).send(fail(config.errorCode, '缺少 IP'))
+      return
+    }
+    const blocked = stores.blockedIPs
+    if (!blocked) return unavailable(reply, 'IP 黑名单存储未接')
+    return ok(blocked.add(ip, b.reason ?? ''))
+  })
+  app.delete('/admin/blocked-ips/:id', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const { id } = req.params as { id: string }
+    stores.blockedIPs?.remove(Number(id))
+    return ok({})
+  })
+
+  // ---- 设备与密钥分布（读 sessions / api_keys / 明细 IP） ----
+  app.get('/admin/devices', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const qs = req.query as Record<string, string>
+    const page = clampPage(qs['page'])
+    const pageSize = clampPageSize(qs['page_size'])
+    const db = (stores.users as unknown as { db?: unknown })?.db as never
+    void db
+    const rows = stores.devices?.page({ page, pageSize, ...(qs['keyword'] ? { keyword: qs['keyword'] } : {}) })
+    return ok(rows ?? { total: 0, page: 1, page_size: pageSize, list: [] })
+  })
+
+  // ---- 卡密（生成 / 作废 / 兑换） ----
+  app.get('/admin/redeem-codes', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const qs = req.query as Record<string, string>
+    return ok(
+      stores.quotaExtra?.redeemCodes({
+        page: clampPage(qs['page']),
+        pageSize: clampPageSize(qs['page_size']),
+        ...(qs['batch_no'] ? { batchNo: qs['batch_no'] } : {}),
+        ...(qs['status'] ? { status: qs['status'] } : {}),
+        ...(qs['plan_id'] ? { planId: Number(qs['plan_id']) } : {}),
+      }) ?? { total: 0, page: 1, page_size: 20, list: [] },
+    )
+  })
+  app.post('/admin/redeem-codes', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const b = (req.body ?? {}) as { count?: number; plan_id?: number; batch_no?: string }
+    const plan = stores.plans?.byId(b.plan_id ?? 0)
+    if (!plan) {
+      reply.code(400).send(fail(config.errorCode, '套餐不存在'))
+      return
+    }
+    const created = stores.quotaExtra?.createRedeemCodes({
+      count: b.count ?? 1, planId: plan.id, planName: plan.name, ...(b.batch_no ? { batchNo: b.batch_no } : {}),
+    })
+    return ok(created ?? [])
+  })
+  app.post('/admin/redeem-codes/:id/revoke', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const { id } = req.params as { id: string }
+    return ok({ revoked: stores.quotaExtra?.revokeRedeemCode(Number(id)) ?? false })
+  })
+  app.post('/admin/redeem-codes/revoke-selected', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const b = (req.body ?? {}) as { ids?: number[] }
+    return ok({ revoked: stores.quotaExtra?.revokeRedeemCodes(b.ids ?? []) ?? 0 })
+  })
+  app.delete('/admin/redeem-codes/batch/:batch_no', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const { batch_no } = req.params as { batch_no: string }
+    return ok({ revoked: stores.quotaExtra?.revokeRedeemBatch(batch_no) ?? 0 })
+  })
+  app.post('/user/redeem', async (req, reply) => {
+    const id = await resolveIdentity(req, config, deps.stores ?? {})
+    if (id.userId === undefined) {
+      reply.code(401).send(fail(401, '请先登录'))
+      return
+    }
+    const b = (req.body ?? {}) as { code?: string }
+    if (!b.code) {
+      reply.code(400).send(fail(config.errorCode, '请输入卡密'))
+      return
+    }
+    const user = stores.users?.byId(id.userId)
+    try {
+      const r = stores.quotaExtra?.redeem({ code: b.code, userId: id.userId, username: user?.username ?? '' })
+      return ok({ plan: r?.plan ?? null })
+    } catch (e) {
+      reply.code(400).send(fail(config.errorCode, e instanceof Error ? e.message : '兑换失败'))
+    }
+  })
+
   // ---- 明确未接的域（面板有页、后端没有） ----
   const stubs: Array<[string, string, string]> = [
-    ['GET', '/admin/quota-costs/plans', '套餐接口消耗（覆盖全局限速）'],
-    ['POST', '/admin/quota-costs/plans/upsert', '套餐接口消耗（覆盖全局限速）'],
-    ['PUT', '/admin/quota-costs/plans/:id', '套餐接口消耗（覆盖全局限速）'],
-    ['GET', '/admin/redeem-codes', '卡密'],
-    ['POST', '/admin/redeem-codes', '卡密'],
-    ['POST', '/admin/redeem-codes/:id/revoke', '卡密'],
-    ['POST', '/admin/redeem-codes/revoke-selected', '卡密'],
-    ['DELETE', '/admin/redeem-codes/batch/:batch_no', '卡密'],
-    ['GET', '/admin/blocked-ips', 'IP 拉黑'],
-    ['POST', '/admin/blocked-ips', 'IP 拉黑'],
-    ['DELETE', '/admin/blocked-ips/:id', 'IP 拉黑'],
-    ['GET', '/admin/security/attempts', '登录限频读数'],
-    ['POST', '/admin/security/attempts/reset', '登录限频读数'],
-    ['GET', '/admin/devices', '设备与密钥统计'],
-    ['GET', '/quota/transfers', '额度转移'],
-    ['POST', '/quota/transfer', '额度转移'],
-    ['DELETE', '/quota/transfers', '额度转移'],
-    ['POST', '/user/redeem', '卡密兑换'],
   ]
   for (const [method, path, what] of stubs) {
     const m = method.toLowerCase() as 'get' | 'post' | 'put' | 'delete'

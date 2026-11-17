@@ -5,6 +5,12 @@ import Fastify, { type FastifyInstance } from 'fastify'
 import type { Config, Logger, Upstream } from '@loomproxy/kernel'
 import type {
   ApiKeyStore,
+  DbBlockedIPs,
+  DbDevices,
+  DbNameCache,
+  DbSchedules,
+  DbQuotaExtra,
+  DbSourceGroups,
   DbQuota,
   DbSourceConfigs,
   CallLogStore,
@@ -37,6 +43,12 @@ export type ApiDeps = {
   callLogs?: CallLogStore
   quota?: DbQuota
   sourceConfigs?: DbSourceConfigs
+  blockedIPs?: DbBlockedIPs
+  devices?: DbDevices
+  nameCache?: DbNameCache
+  schedules?: DbSchedules
+  quotaExtra?: DbQuotaExtra
+  sourceGroups?: DbSourceGroups
   ledger?: Ledger
   limiter?: RateLimiter
 }
@@ -71,10 +83,16 @@ export function buildServer(deps: ApiDeps): FastifyInstance {
     ...(deps.plans ? { plans: deps.plans } : {}),
     ...(deps.sessions ? { sessions: deps.sessions } : {}),
     ...(deps.apiKeys ? { apiKeys: deps.apiKeys } : {}),
-    ...(deps.quota ? { quota: deps.quota } : {}),
-    ...(deps.sourceConfigs ? { sourceConfigs: deps.sourceConfigs } : {}),
     ...(deps.settings ? { settings: deps.settings } : {}),
     ...(deps.callLogs ? { callLogs: deps.callLogs } : {}),
+    ...(deps.quota ? { quota: deps.quota } : {}),
+    ...(deps.quotaExtra ? { quotaExtra: deps.quotaExtra } : {}),
+    ...(deps.sourceConfigs ? { sourceConfigs: deps.sourceConfigs } : {}),
+    ...(deps.sourceGroups ? { sourceGroups: deps.sourceGroups } : {}),
+    ...(deps.blockedIPs ? { blockedIPs: deps.blockedIPs } : {}),
+    ...(deps.devices ? { devices: deps.devices } : {}),
+    ...(deps.nameCache ? { nameCache: deps.nameCache } : {}),
+    ...(deps.schedules ? { schedules: deps.schedules } : {}),
   })
   registerWebRoutes(app, { webDir: deps.config.webDist, logger: deps.logger })
 
@@ -94,6 +112,10 @@ export function buildServer(deps: ApiDeps): FastifyInstance {
     ...(deps.quota ? { quota: deps.quota } : {}),
     ...(deps.quota ? { quota: deps.quota } : {}),
     ...(deps.sourceConfigs ? { sourceConfigs: deps.sourceConfigs } : {}),
+    ...(deps.blockedIPs ? { blockedIPs: deps.blockedIPs } : {}),
+    ...(deps.devices ? { devices: deps.devices } : {}),
+    ...(deps.quotaExtra ? { quotaExtra: deps.quotaExtra } : {}),
+    ...(deps.sourceGroups ? { sourceGroups: deps.sourceGroups } : {}),
   })
 
   // catch-all：新插件加载完立刻可用，不需要 removeRoute/addRoute

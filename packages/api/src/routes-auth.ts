@@ -4,6 +4,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { fail, ok } from '@loomproxy/contract'
 import type { Config } from '@loomproxy/kernel'
 import { resolveIdentity, issueToken, tokenFromRequest, verifyToken } from './auth.ts'
+import { lockedUntil, recordAttempt } from './login-limiter.ts'
 import { notWired, type ApiStores } from './stores.ts'
 
 type Deps = { config: Config; stores: ApiStores }
@@ -49,9 +50,20 @@ export function registerAuthRoutes(app: FastifyInstance, deps: Deps): void {
       reply.code(400).send(fail(config.errorCode, '请输入用户名与密码'))
       return
     }
+    // 三处共用一个判定口：黑名单（长期）→ 限频（短时爆破）
+    if (stores.blockedIPs?.isBlocked(req.ip)) {
+      reply.code(403).send(fail(config.errorCode, '你的 IP 已被拉黑，请联系管理员'))
+      return
+    }
+    const until = lockedUntil(req.ip)
+    if (until > 0) {
+      reply.code(429).send(fail(config.errorCode, `尝试过于频繁，请 ${new Date(until).toISOString().slice(11, 16)} 后再试`))
+      return
+    }
     const users = stores.users
     if (!users) return unavailable(reply, '账号存储未接')
     const hit = users.verifyWithLogin(login, body.password)
+    recordAttempt(req.ip, login, !!hit && hit.row.status === 1)
     if (!hit) {
       reply.code(401).send(fail(config.errorCode, '用户名或密码错误'))
       return

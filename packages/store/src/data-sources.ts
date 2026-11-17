@@ -13,6 +13,7 @@ export type DataSourceRow = {
   status: number
   /** 源声明的默认媒介 */
   media_type?: string
+  group_id?: number | null
 }
 
 export interface DataSourceStore {

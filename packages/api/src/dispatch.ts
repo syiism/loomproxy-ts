@@ -43,6 +43,9 @@ export type DispatchDeps = {
   apiKeys?: ApiKeyStore
   users?: DbUsers
   quota?: DbQuota
+  nameCache?: { remember(kind: 'book' | 'chapter', source: string, ident: string, name: string): void }
+  quotaExtra?: { rateSpecFor(planId: number | null, source: string, action: string): { intervalMs?: number; count?: number; windowMs?: number } }
+  blockedIPs?: { isBlocked(ip: string): boolean }
 }
 
 function sanitizeMessage(msg: string): string {
@@ -63,6 +66,11 @@ export function createDispatcher(deps: DispatchDeps) {
       return
     }
     const { entry, handler } = resolved
+    // 黑名单在数据面入口就拦（登录/注册那边同一张表，见 routes-auth）
+    if (deps.blockedIPs?.isBlocked(req.ip)) {
+      reply.code(403).send({ code: deps.config.errorCode, msg: '你的 IP 已被拉黑，请联系管理员' })
+      return
+    }
     const identity = await resolveIdentity(req, deps.config, {
       ...(deps.sessions ? { sessions: deps.sessions } : {}),
       ...(deps.apiKeys ? { apiKeys: deps.apiKeys } : {}),
@@ -143,12 +151,20 @@ export function createDispatcher(deps: DispatchDeps) {
       }
 
       // 600：限流（IP 与用户双维度，两者都放行才放行）
+      // 参数每次现取：套餐覆盖 → 全局成本行 → 无（不限）。改完立刻生效
+      const spec = deps.quotaExtra?.rateSpecFor(user?.plan_id ?? null, source, action) ?? {}
       const userKey = identity.userId !== undefined ? `u:${identity.userId}` : 'u:anon'
       if (!deps.limiter.allow(`ip:${req.ip}`, { count: 30, windowMs: 60_000 })) {
         reply.code(429).send({ code: deps.config.errorCode, msg: '接口请求过于频繁，请稍后重试' })
         return
       }
-      if (!deps.limiter.allow(`${userKey}:${source}:${action}`, { intervalMs: 1000 })) {
+      const userSpec =
+        spec.count !== undefined && spec.windowMs !== undefined
+          ? { count: spec.count, windowMs: spec.windowMs }
+          : spec.intervalMs !== undefined
+            ? { intervalMs: spec.intervalMs }
+            : { intervalMs: 1000 }
+      if (!deps.limiter.allow(`${userKey}:${source}:${action}`, userSpec)) {
         reply.code(429).send({ code: deps.config.errorCode, msg: '接口请求过于频繁，请稍后重试' })
         return
       }
@@ -182,6 +198,9 @@ export function createDispatcher(deps: DispatchDeps) {
 
       // 出口三处改写，顺序固定：观测 → 打标 → 带内脱敏
       observeCall(source, params, result, subject)
+      // 名称进缓存：bookId/itemId 是标识，书名/章节名靠这里攒起来（回填与明细展示都读它）
+      if (subject.book_name) deps.nameCache?.remember('book', source, params['bookId'] ?? '', subject.book_name)
+      if (subject.chapter_title) deps.nameCache?.remember('chapter', source, params['itemId'] ?? '', subject.chapter_title)
       if (action === 'search') result = stampSearchSource(result, source)
       result = scrubInBandMsg(result)
 

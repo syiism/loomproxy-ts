@@ -5,34 +5,16 @@
 > **做完一项就把那一项从这里删掉**，并把对应 501 占位换成真实实现 + 用例。
 > 完成顺序按"对面板可用性的影响 / 依赖关系"排，不按表格好看程度排。
 
-## A. 立即可做（无新表、只靠已有数据）
-
-| # | 缺口 | 端点 | 依赖 |
-|---|---|---|---|
-| A5 | 设备与密钥统计 | `GET /admin/devices` | sessions / api_keys 已有 |
-| A6 | 登录限频读数与解锁 | `GET/POST /admin/security/attempts` | 内存计数器（登录入口要接同一个） |
-
 ## B. 需要新表
 
-| # | 缺口 | 端点 | 新表 |
-|---|---|---|---|
-| B1 | IP 拉黑 | `GET/POST /admin/blocked-ips`、`DELETE /:id` | `blocked_ips`（并接线到数据面/登录） |
-| B2 | 套餐级接口限速（覆盖全局） | `GET/PUT/POST /admin/quota-costs/plans*` | `quota_cost_plans`（并接线到限流） |
-| B3 | 额度转移 | `GET/POST/DELETE /quota/transfers*`、admin 代转 | `quota_transfer_logs` + 双源事务 |
-| B4 | 卡密 | `GET/POST /admin/redeem-codes*`、`POST /user/redeem` | `redeem_codes` + 兑换事务 |
-| B5 | 数据源分组（视图 + 批量操作） | `/admin/source-groups*` | `source_groups` + `group_id` 列 + 看板分节 |
-| B6 | 数据源定时启停 | `/admin/source-schedules*` | `source_schedules` + 维护协程 |
+（B 组已全部完成）
 
 ## C. 结构性缺口（不是一两个端点能收的）
 
 | # | 缺口 | 说明 |
 |---|---|---|
-| C1 | 号池运行时 | `GET /admin/pools` 恒回 `[]`：`source-kit` 有状态机，但没接设备表/维护协程 |
-| C2 | 命名缓存与名称回填 | `POST /admin/monitor/backfill-subjects` 501；明细里书名/章节名靠源填 |
-| C3 | 服务端渲染报表 | `GET /admin/monitor/report.html` 目前是一句占位 |
-| C4 | worker 隔离模式 | 插件 manifest 支持 `isolation:"worker"`，宿主只实现了 in-process |
-| C5 | socket activation 零停机 | 现在直接 `app.listen`；Go 版靠 systemd 传 fd |
-| C6 | 面板其余域的门禁化 | Go 版有 nav-check/css-check 等 20 道门禁，本仓只有分层检查 |
+| C1 | 号池运行时 | `GET /admin/pools` 恒回 `[]`：`source-kit` 有状态机，但没接设备表/维护协程。**需要先有一个用池的源**（fq_novel 走 fanq 会话池，不走本仓 pool） |
+| C4 | worker 隔离模式 | 插件 manifest 支持 `isolation:"worker"`，宿主只实现了 in-process；需要 RPC 取数通道（④ §8） |
 
 ## 已完成（供对照，不再列在上面）
 
@@ -46,3 +28,17 @@
 - **A4** 平台数据源默认地址 `GET/PUT /admin/source-configs`（表 `platform_source_configs`）
 - 面板额度卡片渲染修复：`/quota/dashboard` 之前漏了 `sources/groups/is_admin/plan_name/next_reset/...`
   这些格（面板读 `data.sources`，空数组 ⇒ 整页显示"暂无额度配置"），并修了 `next_reset` 的时区显示（曾显示 16:00）
+- **A5** 设备与密钥读数 `GET /admin/devices`（会话/密钥/明细 IP 按用户聚合，`suspect` 标红判据同 Go）
+- **A6** 登录限频 `GET/POST /admin/security/attempts` + 登录入口接线（8 次连错或 1 分钟 >10 次锁 15 分钟）
+- **B1** IP 拉黑 `blocked_ips` + 三处共用判定（登录/数据面/注册）
+- **B2** 套餐级接口限速 `quota_cost_plans`（覆盖全局），dispatch 每次现取 `套餐 → 全局 → 不限`
+- **B3** 额度转移 `quota_transfer_logs`（双源事务、覆盖增量、软删清除、admin 代转）
+- **B4** 卡密 `redeem_codes`（生成/作废/批量作废/兑换换套餐，同一事务）
+- **B5** 数据源分组 `source_groups` + `data_sources.group_id`（CRUD/成员/批量授权/看板分节）
+- **C3** 服务端渲染报表 `GET /admin/monitor/report.html`（读聚合表，一次生成整页 HTML）
+- **C5** systemd socket activation（`LISTEN_FDS`/`LISTEN_PID` → 继承 fd 监听，拿不到回退自绑）
+- **B6** 数据源定时启停 `source_schedules`（daily 钟点 / once 绝对时刻；`in_window`/`window_text`/`applied` 现算，
+  main.ts 每 60s 一拍，停机时 clear）
+- **C2** 命名缓存 `name_cache` + 回填（`POST /admin/monitor/backfill-subjects` 返回 books/chapters 补了多少行）
+- **C6** 面板—后端契约门禁 `tools/check-web-contract.mjs`（扫 `web/src/api/index.js` 的调用点对后端路由表，
+  已进 `pnpm run check`；模板字面量路由按通配段匹配）——对应 Go 版 nav-check 那一族

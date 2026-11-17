@@ -10,6 +10,12 @@ import {
   DbPlans,
   DbRoles,
   DbSessions,
+  DbBlockedIPs,
+  DbDevices,
+  DbNameCache,
+  DbSchedules,
+  DbQuotaExtra,
+  DbSourceGroups,
   DbQuota,
   DbSourceConfigs,
   DbSettings,
@@ -43,6 +49,12 @@ export type Composed = {
   callLogs: DbCallLogs
   quota: DbQuota
   sourceConfigs: DbSourceConfigs
+  blockedIPs: DbBlockedIPs
+  devices: DbDevices
+  nameCache: DbNameCache
+  schedules: DbSchedules
+  quotaExtra: DbQuotaExtra
+  sourceGroups: DbSourceGroups
 }
 
 /** 内置角色：面板与 access 判定都按 code 读（admin/vip/user） */
@@ -81,6 +93,12 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
   const callLogs = new DbCallLogs(db)
   const quota = new DbQuota(db)
   const sourceConfigs = new DbSourceConfigs(db)
+  const blockedIPs = new DbBlockedIPs(db)
+  const devices = new DbDevices(db)
+  const nameCache = new DbNameCache(db)
+  const schedules = new DbSchedules(db)
+  const quotaExtra = new DbQuotaExtra(db, quota)
+  const sourceGroups = new DbSourceGroups(db, quota)
 
   // ---- 播种：角色 → 默认套餐 → 管理员 ----
   for (const r of BUILTIN_ROLES) {
@@ -147,6 +165,12 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
     callLogs,
     quota,
     sourceConfigs,
+    blockedIPs,
+    devices,
+    nameCache,
+    schedules,
+    quotaExtra,
+    sourceGroups,
   })
-  return { config, app, db, host, registry, settings, dataSources, users, roles, plans, sessions, apiKeys, callLogs, quota, sourceConfigs }
+  return { config, app, db, host, registry, settings, dataSources, users, roles, plans, sessions, apiKeys, callLogs, quota, sourceConfigs, blockedIPs, devices, nameCache, schedules, quotaExtra, sourceGroups }
 }
