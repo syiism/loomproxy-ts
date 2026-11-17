@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS users (
   status INTEGER NOT NULL DEFAULT 1,
   content_consent INTEGER NOT NULL DEFAULT 1,
   plan_id INTEGER,
+  quota_reset_at TEXT,
   last_login_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -119,6 +120,50 @@ CREATE TABLE IF NOT EXISTS api_call_stats (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (source, action)
 );
+CREATE TABLE IF NOT EXISTS quota_limits (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  plan_id INTEGER NOT NULL,
+  scope TEXT NOT NULL,
+  target TEXT NOT NULL,
+  "limit" INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (plan_id, scope, target)
+);
+CREATE TABLE IF NOT EXISTS user_quota_overrides (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  scope TEXT NOT NULL,
+  target TEXT NOT NULL,
+  "limit" INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (user_id, scope, target)
+);
+CREATE TABLE IF NOT EXISTS quota_usage_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  username TEXT NOT NULL DEFAULT '',
+  group_code TEXT NOT NULL,
+  "interface" TEXT NOT NULL,
+  cost INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS quota_costs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  group_code TEXT NOT NULL,
+  "interface" TEXT NOT NULL,
+  cost INTEGER NOT NULL DEFAULT 0,
+  status INTEGER NOT NULL DEFAULT 1,
+  interval INTEGER NOT NULL DEFAULT 0,
+  limit_count INTEGER NOT NULL DEFAULT 0,
+  window_sec INTEGER NOT NULL DEFAULT 60,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (group_code, "interface")
+);
+CREATE INDEX IF NOT EXISTS idx_limits_plan ON quota_limits(plan_id);
+CREATE INDEX IF NOT EXISTS idx_usage_user ON quota_usage_logs(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_logs_created ON api_call_logs(created_at);
 CREATE INDEX IF NOT EXISTS idx_logs_source ON api_call_logs(source, action);
 CREATE INDEX IF NOT EXISTS idx_logs_plugin ON api_call_logs(plugin_version);

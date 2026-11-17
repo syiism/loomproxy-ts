@@ -255,6 +255,10 @@ Kind   = "" | "burn_wall_clock" | "spread"
 抽取规则（`legado.ObserveCall`）：`bookList`→搜词+书名灌缓存；`bookInfo`→书名/媒介；
 `chapterList`→条数；正文→`contentType` 判媒介、`content` 非空记 1。**空串 = 没抽到，不是错误。**
 
+额度侧落库（本分支新增，Go 版同名表）：`quota_limits(plan_id, scope, target, "limit")`、
+`user_quota_overrides`、`quota_usage_logs(user_id, username, group_code, interface, cost, created_at)`、
+`quota_costs(group_code, interface, cost, status, interval, limit_count, window_sec)`。
+
 落库字段（`api_call_logs`）：`username, ip, source, action, status, in_band_error,
 in_band_reason, in_band_code, latency_ms, created_at, keyword, book_name, chapter_title,
 book_ident, chapter_ident, media_type, result_count, content_withheld, **plugin_version**`

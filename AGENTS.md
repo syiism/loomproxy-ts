@@ -74,6 +74,10 @@ PLUGIN_DIR=plugins node apps/server/src/main.ts          # ③ 起服务 → cur
 - 口令用 scrypt（`hashPassword/verifyPassword`）；会话是**现行校验**（JWT 带 jti，撤销即刻失效）。
 - 播种（角色/默认套餐/管理员/内置设置）在 `apps/server/src/compose.ts`，**幂等**：已存在的不覆盖。
 - 未接域一律 501 + 人话（`notWired()`），不要返回成功空响应。
+- 额度域三条不变量：①**限额即授权**（`quota_limits` 里 `scope='source'` 的一行同时决定"能不能用"与"用多少"）；
+  ②生效顺序 `用户覆盖 → 套餐 → -1(不限)`，每次请求现取（改完立刻生效，不许烘进启动期）；
+  ③只有**成功且非带内失败**才记账，同内容在 `BILLING_DEDUPE_SEC` 内只扣一次。
+- `limit` 是 SQLite 保留字：列名与别名都要加引号（别名别再用 `limit`，踩过一次语法错误）。
 
 ## 7. 写代码的约定
 

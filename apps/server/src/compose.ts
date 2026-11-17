@@ -10,6 +10,7 @@ import {
   DbPlans,
   DbRoles,
   DbSessions,
+  DbQuota,
   DbSettings,
   DbUsers,
   SqliteDb,
@@ -39,6 +40,7 @@ export type Composed = {
   sessions: DbSessions
   apiKeys: DbApiKeys
   callLogs: DbCallLogs
+  quota: DbQuota
 }
 
 /** 内置角色：面板与 access 判定都按 code 读（admin/vip/user） */
@@ -75,6 +77,7 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
   const sessions = new DbSessions(db)
   const apiKeys = new DbApiKeys(db)
   const callLogs = new DbCallLogs(db)
+  const quota = new DbQuota(db)
 
   // ---- 播种：角色 → 默认套餐 → 管理员 ----
   for (const r of BUILTIN_ROLES) {
@@ -115,6 +118,15 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
     upstream,
   })
   const infos = await host.scanSync()
+  // 每个已加载动作登记一条成本（缺省 1 点；面板「接口」页可改）。缺成本行 = 不计费，流水永远空
+  for (const info of infos) {
+    if (info.state !== 'active') continue
+    const entry = registry.get(info.code)
+    if (!entry) continue
+    for (const action of entry.meta.actions) {
+      if (!quota.costOf(info.code, action)) quota.upsertCost({ group_code: info.code, interface: action, cost: 1 })
+    }
+  }
   logger.info(`插件扫描完成：${infos.length} 个（active=${infos.filter((i) => i.state === 'active').length}）`)
 
   const app = buildServer({
@@ -130,6 +142,7 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
     sessions,
     apiKeys,
     callLogs,
+    quota,
   })
-  return { config, app, db, host, registry, settings, dataSources, users, roles, plans, sessions, apiKeys, callLogs }
+  return { config, app, db, host, registry, settings, dataSources, users, roles, plans, sessions, apiKeys, callLogs, quota }
 }

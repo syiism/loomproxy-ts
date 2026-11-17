@@ -74,10 +74,11 @@ Node 24 直接跑 `.ts`（type stripping），所以**用例不需要构建**；
 | 面板：原 Go 面板全量搬入 + 「源插件」新页；登录/用户/角色/设置/数据源/监控/明细 已接真库 | ✅ `web` |
 | 调用明细 `plugin_version` 列（④ §7 批准的那一格） | ✅ 出口 hook 记账 + `/admin/monitor/history` |
 | 源包实现 | ✅ 试点 1 个：`fq_novel`（4 动作，实网跑通 search/detail/chapter/content）；其余源未开始 |
-| **数据库读写** | ✅ SQLite（`node:sqlite` 内置，无 native/cgo）：users/roles/user_roles/sessions/api_keys/system_settings/data_sources/plans/api_call_logs/api_call_stats，DDL 在 `packages/store/src/sqlite.ts` |
+| **数据库读写** | ✅ SQLite（`node:sqlite` 内置，无 native/cgo）：users/roles/user_roles/sessions/api_keys/system_settings/data_sources/plans/api_call_logs/api_call_stats/quota_limits/user_quota_overrides/quota_usage_logs/quota_costs，DDL 在 `packages/store/src/sqlite.ts` |
+| **额度域** | ✅ 限额即授权（scope=source）、批量授权/复制、用户覆盖、日界起算点刷新、成功记账（去重窗口）、超额 429、看板/我的流水/admin 流水、接口成本表 |
 | drizzle/sqlite 持久化（设置、data_sources、明细、号池表） | ⛔ 未接（`store` 现为内存实现） |
 | worker 隔离模式、号池运行时、socket activation | ⛔ 未接（设计见 ④ §2/§8、③ §9） |
-| 额度/套餐限额/卡密/分组/定时/IP 拉黑/设备/接口消耗/额度看板 | ⛔ 未接：这些端点显式回 **501 + 一句人能照着做的话**（不是成功空响应）。面板照旧显示，报错原样 toast |
+| 额度**转移**（`/quota/transfer*`、admin 代转）、卡密、分组、定时、IP 拉黑、设备、套餐级接口限速（`quota_cost_plans`） | ⛔ 未接：显式 **501 + 一句人能照着做的话**（不是成功空响应）。面板照旧显示，报错原样 toast |
 | drizzle / MySQL / PostgreSQL | ⛔ 本轮用 `node:sqlite` + 手写 DDL；接口不变，换 provider 时只动 `packages/store` |
 
 ## 外部依赖（fq_novel 试点）

@@ -160,13 +160,64 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
     return ok({})
   })
 
-  // 额度域未接：这三条会 501（面板 Users 页会显示 msg，不会假装成功）
-  app.put('/admin/users/:id/plan', async (_req, reply) => unavailable(reply, '用户套餐变更（属额度域）'))
-  app.get('/admin/users/:id/quota', async (_req, reply) => unavailable(reply, '用户额度视图（属额度域）'))
-  app.put('/admin/users/:id/quota', async (_req, reply) => unavailable(reply, '用户额度覆盖（属额度域）'))
-  app.post('/admin/users/:id/refresh-quota', async (_req, reply) => unavailable(reply, '额度起算点刷新（属额度域）'))
-  app.get('/admin/users/:id/quota-transfers', async (_req, reply) => unavailable(reply, '额度转移记录（属额度域）'))
-  app.post('/admin/users/:id/quota-transfer', async (_req, reply) => unavailable(reply, '管理员代转额度（属额度域）'))
+  app.put('/admin/users/:id/plan', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const { id } = req.params as { id: string }
+    const b = (req.body ?? {}) as { plan_id?: number | null }
+    stores.quota?.setPlan(Number(id), b.plan_id ?? null)
+    return ok(stores.users?.byId(Number(id)) ?? {})
+  })
+
+  app.get('/admin/users/:id/quota', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const { id } = req.params as { id: string }
+    const user = stores.users?.byId(Number(id))
+    if (!user) {
+      reply.code(404).send(fail(config.errorCode, '用户不存在'))
+      return
+    }
+    const q = stores.quota
+    const since = q?.startOfWindow(user.id, config.tzOffsetHours) ?? new Date().toISOString()
+    const limits = (q?.limitsOfPlan(user.plan_id ?? 0) ?? []).filter((l) => l.scope === 'source')
+    const rows = limits.map((l) => {
+      const used = q?.usedSince(user.id, l.target, since) ?? 0
+      const override = q?.overridesOf(user.id).find((o) => o.target === l.target)
+      return {
+        source: l.target,
+        limit: override ? override.limit : l.limit,
+        plan_limit: l.limit,
+        override: override ? override.limit : null,
+        used,
+        remaining: Math.max(0, (override ? override.limit : l.limit) - used),
+      }
+    })
+    return ok({ user_id: user.id, plan: user.plan, since, rows })
+  })
+
+  app.put('/admin/users/:id/quota', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const { id } = req.params as { id: string }
+    const b = (req.body ?? {}) as { overrides?: Array<{ source?: string; target?: string; limit?: number }> }
+    const q = stores.quota
+    if (!q) return unavailable(reply, '额度存储未接')
+    q.clearOverrides(Number(id))
+    for (const o of b.overrides ?? []) {
+      const target = o.source ?? o.target
+      if (!target) continue
+      q.setOverride(Number(id), 'source', target, o.limit ?? 0)
+    }
+    return ok({})
+  })
+
+  app.post('/admin/users/:id/refresh-quota', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const { id } = req.params as { id: string }
+    stores.quota?.refreshStart(Number(id))
+    return ok({})
+  })
+
+  app.get('/admin/users/:id/quota-transfers', async (_req, reply) => unavailable(reply, '额度转移记录（转移模型未接）'))
+  app.post('/admin/users/:id/quota-transfer', async (_req, reply) => unavailable(reply, '管理员代转额度（转移模型未接）'))
 
   // ---- 角色 ----
   app.get('/admin/roles', async (req, reply) => {
@@ -225,14 +276,79 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
     stores.plans?.remove(Number(id))
     return ok({})
   })
-  for (const path of ['/admin/quotas/plans/:id/limits', '/admin/quotas/plans/:id/data-sources', '/admin/quotas/plans/:id/sources']) {
-    app.get(path, async (_req, reply) => unavailable(reply, '套餐限额/授权（属额度域）'))
+  // 套餐限额（= 授权）：scope=source 的行就是"这个套餐能用哪些源"
+  app.get('/admin/quotas/plans/:id/limits', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const q = stores.quota
+    if (!q) return unavailable(reply, '额度存储未接')
+    const { id } = req.params as { id: string }
+    return ok(q.limitsOfPlan(Number(id)))
+  })
+  app.get('/admin/quotas/plans/:id/data-sources', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const q = stores.quota
+    if (!q) return unavailable(reply, '额度存储未接')
+    const { id } = req.params as { id: string }
+    return ok(q.grantedSources(Number(id)))
+  })
+  app.post('/admin/quotas/limits', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const q = stores.quota
+    if (!q) return unavailable(reply, '额度存储未接')
+    const b = (req.body ?? {}) as { plan_id?: number; scope?: string; target?: string; limit?: number }
+    if (!b.plan_id || !b.scope || !b.target) {
+      reply.code(400).send(fail(config.errorCode, '缺少 plan_id/scope/target'))
+      return
+    }
+    const id = q.createLimit({ plan_id: b.plan_id, scope: b.scope, target: b.target, limit: b.limit ?? 0 })
+    return ok({ id })
+  })
+  app.put('/admin/quotas/limits/:id', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const { id } = req.params as { id: string }
+    const b = (req.body ?? {}) as { limit?: number }
+    stores.quota?.updateLimit(Number(id), b.limit ?? 0)
+    return ok({})
+  })
+  app.delete('/admin/quotas/limits/:id', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const { id } = req.params as { id: string }
+    stores.quota?.removeLimit(Number(id))
+    return ok({})
+  })
+  // 批量授权 / 从别的套餐复制（面板的"一次给多个源"与"复制授权"）
+  const grantMany = async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!(await guard(req, reply))) return
+    const q = stores.quota
+    if (!q) return unavailable(reply, '额度存储未接')
+    const { id } = req.params as { id: string }
+    const b = (req.body ?? {}) as { source_names?: string[]; sources?: string[]; limit?: number }
+    const names = b.source_names ?? b.sources ?? []
+    for (const n of names) q.grant(Number(id), 'source', n, b.limit ?? 0)
+    return ok({ granted: names.length })
   }
-  for (const path of ['/admin/quotas/limits', '/admin/quotas/limits/:id', '/admin/quotas/plans/:id/sources', '/admin/quotas/plans/:id/clone-sources', '/admin/quotas/plans/:id/data-sources', '/admin/quotas/plans/:id/data-sources/batch']) {
-    app.post(path, async (_req, reply) => unavailable(reply, '套餐限额/授权（属额度域）'))
-    app.put(path, async (_req, reply) => unavailable(reply, '套餐限额/授权（属额度域）'))
-    app.delete(path, async (_req, reply) => unavailable(reply, '套餐限额/授权（属额度域）'))
-  }
+  app.post('/admin/quotas/plans/:id/sources', grantMany)
+  app.post('/admin/quotas/plans/:id/data-sources', grantMany)
+  app.post('/admin/quotas/plans/:id/data-sources/batch', grantMany)
+  app.post('/admin/quotas/plans/:id/clone-sources', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const q = stores.quota
+    if (!q) return unavailable(reply, '额度存储未接')
+    const { id } = req.params as { id: string }
+    const b = (req.body ?? {}) as { from_plan_id?: number; source_plan_id?: number; from?: number }
+    const from = b.from_plan_id ?? b.source_plan_id ?? b.from
+    if (!from) {
+      reply.code(400).send(fail(config.errorCode, '缺少来源套餐 from_plan_id'))
+      return
+    }
+    return ok({ cloned: q.cloneSources(Number(id), from) })
+  })
+  app.delete('/admin/quotas/plans/:id/data-sources/:ds_id', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const { ds_id } = req.params as { ds_id: string }
+    stores.quota?.removeLimit(Number(ds_id))
+    return ok({})
+  })
 
   // ---- 设置 ----
   app.get('/admin/settings', async (req, reply) => {
@@ -385,14 +501,80 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
     return ok({ dim: 'keyword', days: Number(q['days'] ?? 7), list: logs?.subjects?.('keyword', Number(q['days'] ?? 7)) ?? [] })
   })
 
+  // ---- 用量流水与接口消耗 ----
+  app.get('/admin/usage-logs', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const q = stores.quota
+    if (!q) return unavailable(reply, '额度存储未接')
+    const qs = req.query as Record<string, string>
+    return ok(
+      q.usagePage({
+        page: clampPage(qs['page']),
+        pageSize: clampPageSize(qs['page_size']),
+        ...(qs['username'] ? { username: qs['username'] } : {}),
+        ...(qs['group'] ? { groupCode: qs['group'] } : {}),
+      }),
+    )
+  })
+
+  app.get('/admin/quota-costs', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    return ok((stores.quota?.costs() ?? []).map((c) => ({ ...c, group_code: c.group_code, interface: c.interface })))
+  })
+  app.put('/admin/quota-costs/:id', async (req, reply) => {
+    if (!(await guard(req, reply))) return
+    const { id } = req.params as { id: string }
+    const b = (req.body ?? {}) as { cost?: number; status?: number; interval?: number; limit_count?: number; window_sec?: number }
+    stores.quota?.updateCost(Number(id), b)
+    return ok({})
+  })
+
+  // ---- 我的额度（面板概览页） ----
+  app.get('/quota/dashboard', async (req, reply) => {
+    const id = await resolveIdentity(req, config, deps.stores ?? {})
+    if (id.userId === undefined) {
+      reply.code(401).send(fail(401, '请先登录'))
+      return
+    }
+    const user = stores.users?.byId(id.userId)
+    if (!user) {
+      reply.code(404).send(fail(config.errorCode, '用户不存在'))
+      return
+    }
+    const q = stores.quota
+    const since = q?.startOfWindow(user.id, config.tzOffsetHours) ?? new Date().toISOString()
+    const limits = (q?.limitsOfPlan(user.plan_id ?? 0) ?? []).filter((l) => l.scope === 'source')
+    const rows = limits.map((l) => {
+      const used = q?.usedSince(user.id, l.target, since) ?? 0
+      const override = q?.overridesOf(user.id).find((o) => o.target === l.target)
+      const limit = override ? override.limit : l.limit
+      return { source: l.target, limit, used, remaining: Math.max(0, limit - used) }
+    })
+    return ok({ user: { id: user.id, username: user.username, plan: user.plan }, since, rows })
+  })
+
+  app.get('/quota/usage-logs', async (req, reply) => {
+    const id = await resolveIdentity(req, config, deps.stores ?? {})
+    if (id.userId === undefined) {
+      reply.code(401).send(fail(401, '请先登录'))
+      return
+    }
+    const qs = req.query as Record<string, string>
+    return ok(
+      stores.quota?.usagePage({
+        page: clampPage(qs['page']),
+        pageSize: clampPageSize(qs['page_size']),
+        userId: id.userId,
+        ...(qs['group'] ? { groupCode: qs['group'] } : {}),
+      }) ?? { total: 0, page: 1, page_size: 20, list: [] },
+    )
+  })
+
   // ---- 明确未接的域（面板有页、后端没有） ----
   const stubs: Array<[string, string, string]> = [
-    ['GET', '/admin/usage-logs', '额度用量流水'],
-    ['GET', '/admin/quota-costs', '接口消耗'],
-    ['GET', '/admin/quota-costs/plans', '套餐接口消耗'],
-    ['POST', '/admin/quota-costs/plans/upsert', '接口消耗'],
-    ['PUT', '/admin/quota-costs/:id', '接口消耗'],
-    ['PUT', '/admin/quota-costs/plans/:id', '接口消耗'],
+    ['GET', '/admin/quota-costs/plans', '套餐接口消耗（覆盖全局限速）'],
+    ['POST', '/admin/quota-costs/plans/upsert', '套餐接口消耗（覆盖全局限速）'],
+    ['PUT', '/admin/quota-costs/plans/:id', '套餐接口消耗（覆盖全局限速）'],
     ['GET', '/admin/redeem-codes', '卡密'],
     ['POST', '/admin/redeem-codes', '卡密'],
     ['POST', '/admin/redeem-codes/:id/revoke', '卡密'],
@@ -404,8 +586,6 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
     ['GET', '/admin/security/attempts', '登录限频读数'],
     ['POST', '/admin/security/attempts/reset', '登录限频读数'],
     ['GET', '/admin/devices', '设备与密钥统计'],
-    ['GET', '/quota/dashboard', '额度看板'],
-    ['GET', '/quota/usage-logs', '额度用量'],
     ['GET', '/quota/transfers', '额度转移'],
     ['POST', '/quota/transfer', '额度转移'],
     ['DELETE', '/quota/transfers', '额度转移'],

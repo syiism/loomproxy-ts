@@ -20,6 +20,7 @@ export type RouteDeps = {
   apiKeys?: ApiStores['apiKeys']
   settings?: ApiStores['settings']
   callLogs?: ApiStores['callLogs']
+  quota?: ApiStores['quota']
 }
 
 export function registerControlRoutes(app: FastifyInstance, deps: RouteDeps): void {
@@ -33,6 +34,7 @@ export function registerControlRoutes(app: FastifyInstance, deps: RouteDeps): vo
     ...(deps.apiKeys ? { apiKeys: deps.apiKeys } : {}),
     ...(deps.settings ? { settings: deps.settings } : {}),
     ...(deps.callLogs ? { callLogs: deps.callLogs } : {}),
+    ...(deps.quota ? { quota: deps.quota } : {}),
   }
   registerSourceRoutes(app, { config: deps.config, host: deps.host, dataSources: deps.dataSources, stores })
   registerAuthRoutes(app, { config: deps.config, stores })

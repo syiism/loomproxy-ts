@@ -6,7 +6,15 @@ import { ClientCanceled, isUpstreamError, newSubject } from '@loomproxy/contract
 import type { Config, Logger, Upstream } from '@loomproxy/kernel'
 import { Ledger, RateLimiter, accessMessage, contentKeyOf, sourceAccessVerdict } from '@loomproxy/gate'
 import { createFetchFacade, observeCall, stampSearchSource } from '@loomproxy/source-kit'
-import type { ApiKeyStore, CallLogStore, DataSourceStore, SessionStore, SettingsStore } from '@loomproxy/store'
+import type {
+  ApiKeyStore,
+  CallLogStore,
+  DataSourceStore,
+  DbQuota,
+  DbUsers,
+  SessionStore,
+  SettingsStore,
+} from '@loomproxy/store'
 import type { SourceHost } from '@loomproxy/source-host'
 import { resolveIdentity } from './auth.ts'
 import { trackCall } from './calls.ts'
@@ -33,11 +41,16 @@ export type DispatchDeps = {
   /** 会话与账号密钥：有它们才做"撤销即刻失效/密钥认出归属" */
   sessions?: SessionStore
   apiKeys?: ApiKeyStore
+  users?: DbUsers
+  quota?: DbQuota
 }
 
 function sanitizeMessage(msg: string): string {
   return msg.includes('://') ? '上游请求失败，请稍后重试' : msg
 }
+
+/** 同内容去重窗口（内存态；跨重启会重复扣一次，与 Go 版同取舍） */
+const dedupeWindow = new Map<string, number>()
 
 export function createDispatcher(deps: DispatchDeps) {
   const fetch = createFetchFacade(deps.upstream)
@@ -111,6 +124,24 @@ export function createDispatcher(deps: DispatchDeps) {
         return
       }
 
+      // 500：额度预检（每次现取成本与生效额度：面板改完立刻生效）
+      const quota = deps.quota
+      const user = identity.userId !== undefined ? deps.users?.byId(identity.userId) : undefined
+      const costRow = quota?.costOf(source, action)
+      const cost = costRow && costRow.status === 1 ? costRow.cost : 0
+      const since = user && quota ? quota.startOfWindow(user.id, deps.config.tzOffsetHours) : ''
+      if (user && quota && cost > 0) {
+        const limit = quota.effectiveLimit(user.id, user.plan_id, source)
+        const used = quota.usedSince(user.id, source, since)
+        if (limit >= 0 && used + cost > limit) {
+          reply.code(429).send({
+            code: deps.config.errorCode,
+            msg: `今日 ${source} 额度已用完（${used}/${limit}），请明日再来或联系管理员调整套餐`,
+          })
+          return
+        }
+      }
+
       // 600：限流（IP 与用户双维度，两者都放行才放行）
       const userKey = identity.userId !== undefined ? `u:${identity.userId}` : 'u:anon'
       if (!deps.limiter.allow(`ip:${req.ip}`, { count: 30, windowMs: 60_000 })) {
@@ -154,16 +185,17 @@ export function createDispatcher(deps: DispatchDeps) {
       if (action === 'search') result = stampSearchSource(result, source)
       result = scrubInBandMsg(result)
 
-      // 500：计费（成功后扣减，同内容窗口内去重）
-      if (identity.userId !== undefined) {
-        deps.ledger.charge(
-          identity.userId,
-          source,
-          action,
-          contentKeyOf(action, params),
-          1,
-          deps.config.billingDedupeSec * 1000,
-        )
+      // 计费入账：成功且非带内失败才扣（去重窗口挡住"客户端超时重试"重复扣费）
+      if (user && quota && cost > 0 && !subject.in_band_error) {
+        const k = `${user.id}:${source}:${action}:${contentKeyOf(action, params)}`
+        const last = dedupeWindow.get(k)
+        const now = Date.now()
+        if (!last || now - last >= deps.config.billingDedupeSec * 1000) {
+          dedupeWindow.set(k, now)
+          quota.appendUsage({ user_id: user.id, username: user.username, group_code: source, action, cost })
+        }
+      } else if (identity.userId !== undefined) {
+        deps.ledger.charge(identity.userId, source, action, contentKeyOf(action, params), 1, deps.config.billingDedupeSec * 1000)
       }
       deps.logger.debug(`${source}/${action} ${Date.now() - started}ms inband=${subject.in_band_error}`)
 

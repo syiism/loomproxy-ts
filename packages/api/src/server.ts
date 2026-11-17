@@ -5,6 +5,7 @@ import Fastify, { type FastifyInstance } from 'fastify'
 import type { Config, Logger, Upstream } from '@loomproxy/kernel'
 import type {
   ApiKeyStore,
+  DbQuota,
   CallLogStore,
   DataSourceStore,
   PlanStore,
@@ -33,6 +34,7 @@ export type ApiDeps = {
   sessions?: SessionStore
   apiKeys?: ApiKeyStore
   callLogs?: CallLogStore
+  quota?: DbQuota
   ledger?: Ledger
   limiter?: RateLimiter
 }
@@ -67,6 +69,9 @@ export function buildServer(deps: ApiDeps): FastifyInstance {
     ...(deps.plans ? { plans: deps.plans } : {}),
     ...(deps.sessions ? { sessions: deps.sessions } : {}),
     ...(deps.apiKeys ? { apiKeys: deps.apiKeys } : {}),
+    ...(deps.users ? { users: deps.users } : {}),
+    ...(deps.quota ? { quota: deps.quota } : {}),
+    ...(deps.quota ? { quota: deps.quota } : {}),
     ...(deps.settings ? { settings: deps.settings } : {}),
     ...(deps.callLogs ? { callLogs: deps.callLogs } : {}),
   })
@@ -84,6 +89,9 @@ export function buildServer(deps: ApiDeps): FastifyInstance {
     ...(deps.callLogs ? { callLogs: deps.callLogs } : {}),
     ...(deps.sessions ? { sessions: deps.sessions } : {}),
     ...(deps.apiKeys ? { apiKeys: deps.apiKeys } : {}),
+    ...(deps.users ? { users: deps.users } : {}),
+    ...(deps.quota ? { quota: deps.quota } : {}),
+    ...(deps.quota ? { quota: deps.quota } : {}),
   })
 
   // catch-all：新插件加载完立刻可用，不需要 removeRoute/addRoute

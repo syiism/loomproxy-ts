@@ -8,6 +8,7 @@ import { SourceRegistry } from '@loomproxy/source-kit'
 import {
   DbApiKeys,
   DbCallLogs,
+  DbQuota,
   DbDataSources,
   DbPlans,
   DbRoles,
@@ -87,6 +88,7 @@ async function makeApp() {
   const sessions = new DbSessions(db)
   const apiKeys = new DbApiKeys(db)
   const callLogs = new DbCallLogs(db)
+  const quota = new DbQuota(db)
   for (const r of [
     { code: 'admin', name: '管理员', description: '' },
     { code: 'user', name: '用户', description: '' },
@@ -98,9 +100,9 @@ async function makeApp() {
   users.create({ username: 'u', password: 'u-pass', planId: plan.id, roles: ['user'] })
   const app = buildServer({
     config, logger, upstream, host, dataSources, settings, limiter,
-    users, roles, plans, sessions, apiKeys, callLogs,
+    users, roles, plans, sessions, apiKeys, callLogs, quota,
   })
-  return { app, root, config, host, callLogs, users }
+  return { app, root, config, host, callLogs, users, quota, plans }
 }
 
 const adminToken = () => signToken({ user_id: 1, username: 'admin', roles: ['admin'] }, SECRET)
@@ -357,6 +359,39 @@ test('reload-all：一次把所有插件换代，失败的各留 last_error', as
     assert.equal(list[0]?.code, 'demo_one')
     assert.equal(list[0]?.state, 'active')
     assert.equal(list[0]?.version, '1.0.0')
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('额度域：授权即限额、超了 429、成功记账进流水（一次调用一行）', async () => {
+  const { app, root, quota, plans } = await makeApp()
+  try {
+    const plan = plans.list()[0]!
+    // 接口成本登记（装配时按插件的动作自动写；这里直接写同样的行）
+    quota.upsertCost({ group_code: 'demo_one', interface: 'search', cost: 1 })
+    quota.grant(plan.id, 'source', 'demo_one', 1)
+
+    const first = await app.inject({ method: 'GET', url: '/demo_one/search?key=a', headers: { authorization: `Bearer ${adminToken()}` } })
+    assert.equal(first.statusCode, 200)
+
+    // 换搜索词（绕开去重窗口）再打：限额 1 用完了
+    const second = await app.inject({ method: 'GET', url: '/demo_one/search?key=b', headers: { authorization: `Bearer ${adminToken()}` } })
+    assert.equal(second.statusCode, 429)
+    assert.match((second.json() as { msg: string }).msg, /额度已用完/)
+
+    const logs = await app.inject({ method: 'GET', url: '/admin/usage-logs', headers: { authorization: `Bearer ${adminToken()}` } })
+    const page = (logs.json() as { data: { total: number; list: Array<{ group_code: string; interface: string; cost: number }> } }).data
+    assert.equal(page.total, 1, '只记成功那一发')
+    assert.equal(page.list[0]?.group_code, 'demo_one')
+    assert.equal(page.list[0]?.interface, 'search')
+    assert.equal(page.list[0]?.cost, 1)
+
+    // 看板：限额/已用/剩余
+    const dash = await app.inject({ method: 'GET', url: '/quota/dashboard', headers: { authorization: `Bearer ${adminToken()}` } })
+    const rows = (dash.json() as { data: { rows: Array<{ source: string; limit: number; used: number; remaining: number }> } }).data.rows
+    assert.deepEqual(rows, [{ source: 'demo_one', limit: 1, used: 1, remaining: 0 }])
   } finally {
     await app.close()
     rmSync(root, { recursive: true, force: true })

@@ -2,6 +2,7 @@
 // 这样同一套路由能同时服务"内存骨架"与"接库"两种装配，用例也不必把整库拖进来。
 import type {
   ApiKeyStore,
+  DbQuota,
   CallLogStore,
   DataSourceStore,
   PlanStore,
@@ -20,6 +21,7 @@ export type ApiStores = {
   settings?: SettingsStore
   dataSources?: DataSourceStore & { listAll?(): unknown[]; create?(...args: never[]): unknown }
   callLogs?: CallLogStore
+  quota?: DbQuota
 }
 
 /** 未接的后端域：回 501 + 一句人能照着做的话（面板会把 msg 原样 toast 出来） */
