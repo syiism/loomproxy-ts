@@ -10,6 +10,7 @@ import {
   DbBlockedIPs,
   DbCallLogs,
   DbDevices,
+  DbNameCache,
   DbQuota,
   DbQuotaExtra,
   DbSourceGroups,
@@ -38,14 +39,14 @@ function makePluginDir(): string {
     JSON.stringify({
       sdk_version: '^1',
       entry: './index.mjs',
-      params: { search: ['key'], content: ['bookId', 'itemId'] },
+      params: { search: ['key'], detail: ['bookId'], chapter: ['bookId'], content: ['bookId', 'itemId'] },
       meta: {
         code: 'demo_one',
         display: '演示一号',
         category: 'demo',
         sort_order: 1,
         status: 1,
-        actions: ['search', 'content'],
+        actions: ['search', 'detail', 'chapter', 'content'],
         required_params: { content: ['itemId'] },
         media_type: 'novel',
         search_tabs: [{ tab_type: 3, bd_id: '2', name: '小说', media_type: 'novel' }],
@@ -57,6 +58,10 @@ function makePluginDir(): string {
     `export default { handlers: {
        search: async (ctx) => ({ bookList: [{ bookId: 'b1', name: 'n-' + (ctx.params.key ?? ''), author: 'a',
          kind: 'stale,小说', wordCount: '', lastChapter: '', intro: '', coverUrl: '' }] }),
+       detail: async (ctx) => ({ bookId: ctx.params.bookId ?? 'b1', name: '真实书名', author: 'a',
+         bookTypeCode: 8, bookType: 'novel', coverUrl: '', intro: '', wordCount: '', lastChapter: '',
+         chapterCount: 2, kind: '', status: '' }),
+       chapter: async () => ({ chapterList: [{ title: '第一章', itemId: 'c1' }, { title: '第二章', itemId: 'c2' }] }),
        content: async () => ({ contentType: 'novel', data: { content: '正文' } }),
      } }`,
   )
@@ -95,6 +100,7 @@ async function makeApp() {
   const sessions = new DbSessions(db)
   const apiKeys = new DbApiKeys(db)
   const callLogs = new DbCallLogs(db)
+  const nameCache = new DbNameCache(db)
   const quota = new DbQuota(db)
   const sourceGroups = new DbSourceGroups(db, quota)
   const quotaExtra = new DbQuotaExtra(db, quota)
@@ -111,9 +117,9 @@ async function makeApp() {
   users.create({ username: 'u', password: 'u-pass', planId: plan.id, roles: ['user'] })
   const app = buildServer({
     config, logger, upstream, host, dataSources, settings, limiter,
-    users, roles, plans, sessions, apiKeys, callLogs, quota, quotaExtra, sourceGroups, blockedIPs, devices,
+    users, roles, plans, sessions, apiKeys, callLogs, nameCache, quota, quotaExtra, sourceGroups, blockedIPs, devices,
   })
-  return { app, root, config, host, callLogs, users, quota, plans, quotaExtra, blockedIPs, dataSources, sessions, apiKeys, roles, settings }
+  return { app, root, config, host, callLogs, nameCache, users, quota, plans, quotaExtra, blockedIPs, dataSources, sessions, apiKeys, roles, settings }
 }
 
 const adminToken = () => signToken({ user_id: 1, username: 'admin', roles: ['admin'] }, SECRET)
@@ -354,6 +360,156 @@ test('明细：每次派发落一行并带 plugin_version，历史页可按版�
     // 非管理员不许看明细
     const forbidden = await app.inject({ method: 'GET', url: '/admin/monitor/history', headers: { authorization: `Bearer ${userToken()}` } })
     assert.equal(forbidden.statusCode, 403)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('阅读记录：书名列章节靠命名缓存回填，内容维度榜与公开榜都读得出来', async () => {
+  const { app, root, nameCache } = await makeApp()
+  try {
+    const token = adminToken()
+    // 搜索列表攒书名 → 目录攒章节名 → 正文只带标识，靠缓存反查书名/章名
+    await app.inject({ method: 'GET', url: '/demo_one/search?key=三体' })
+    await app.inject({ method: 'GET', url: '/demo_one/chapter?bookId=b1' })
+    const body = await app.inject({ method: 'GET', url: '/demo_one/content?bookId=b1&itemId=c1' })
+    assert.equal(body.statusCode, 200)
+
+    const cache = nameCache.stats()
+    assert.ok(cache.books >= 1, '搜索列表里的书名要进缓存')
+    assert.ok(cache.chapters >= 2, '目录里的章节名要进缓存')
+
+    const hist = await app.inject({
+      method: 'GET',
+      url: '/admin/monitor/history?action=content',
+      headers: { authorization: `Bearer ${token}` },
+    })
+    const row = (hist.json() as { data: { list: Array<Record<string, unknown>> } }).data.list[0]!
+    assert.equal(row['book_name'], 'n-三体', '正文只带 bookId：书名必须由缓存回填')
+    assert.equal(row['chapter_title'], '第一章', '章节名按「书+章」反查')
+    assert.equal(row['book_ident'], 'b1')
+    assert.equal(row['chapter_ident'], 'c1')
+    assert.equal(row['media_type'], 'novel')
+
+    // 内容维度榜：面板读 data.items / data.coverage / data.name_cache（回裸数组会让整段空白）
+    const subj = await app.inject({
+      method: 'GET',
+      url: '/admin/monitor/subjects?dim=book&days=7',
+      headers: { authorization: `Bearer ${token}` },
+    })
+    assert.equal(subj.statusCode, 200)
+    const sd = (subj.json() as { data: Record<string, unknown> }).data
+    assert.equal(sd['dim'], 'book')
+    assert.equal(sd['coverage_error'], false)
+    assert.ok(Array.isArray(sd['coverage']) && (sd['coverage'] as unknown[]).length > 0, '覆盖率体检要有行')
+    assert.equal(((sd['name_cache'] as { books: number }).books) >= 1, true)
+    const items = sd['items'] as Array<Record<string, unknown>>
+    const book = items.find((i) => i['name'] === 'n-三体')!
+    assert.ok(book, '阅读记录要进书名榜')
+    assert.equal(book['total'], Number(book['visitors']), '书名榜按访问人数排')
+    assert.equal(book['requests'], 1)
+    assert.equal((book['sources'] as string[])[0], 'demo_one')
+    assert.equal(book['book_id'], 'b1')
+    assert.equal(book['success'], 1)
+    assert.ok(typeof book['last_called_at'] === 'string')
+
+    // 维度白名单外的键 → 400（不是回空榜）
+    const bad = await app.inject({
+      method: 'GET',
+      url: '/admin/monitor/subjects?dim=nope',
+      headers: { authorization: `Bearer ${token}` },
+    })
+    assert.equal(bad.statusCode, 400)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('公开榜：/rank/boards 回 {boards:[keyword,book], sources, medias}；白名单空 → 普通用户 403', async () => {
+  const { app, root, settings } = await makeApp()
+  try {
+    await app.inject({ method: 'GET', url: '/demo_one/search?key=三体' })
+    await app.inject({ method: 'GET', url: '/demo_one/content?bookId=b1&itemId=c1' })
+
+    // 管理员不受白名单限制（否则开关一关，自己也没法验证）
+    const admin = await app.inject({ method: 'GET', url: '/rank/boards?days=7', headers: { authorization: `Bearer ${adminToken()}` } })
+    assert.equal(admin.statusCode, 200)
+    const data = (admin.json() as { data: Record<string, unknown> }).data
+    assert.equal(data['unrestricted'], true)
+    const boards = data['boards'] as Array<{ dim: string; title: string; rows: Array<Record<string, unknown>> }>
+    assert.deepEqual(boards.map((b) => b.dim), ['keyword', 'book'])
+    assert.equal(boards[1]!.title, '阅读榜')
+    assert.equal((data['medias'] as unknown[]).length, 4)
+    assert.equal((data['sources'] as Array<{ code: string }>)[0]!.code, 'demo_one')
+    assert.equal(boards[0]!.rows[0]!['name'], '三体')
+    assert.equal(boards[1]!.rows[0]!['name'], 'n-三体')
+    assert.equal(boards[1]!.rows[0]!['book_id'], 'b1')
+    // 公开榜不给运维字段和时间（明细是敏感数据）
+    assert.equal(boards[1]!.rows[0]!['last_called_at'], undefined)
+
+    // 白名单留空 = 不对普通用户开放
+    assert.equal(settings.get('rank_public_sources'), '')
+    const denied = await app.inject({ method: 'GET', url: '/rank/boards', headers: { authorization: `Bearer ${userToken()}` } })
+    assert.equal(denied.statusCode, 403)
+
+    // 放进白名单后普通用户可见，且候选源只剩被开放的那个
+    settings.set('rank_public_sources', 'demo_one')
+    const allowed = await app.inject({ method: 'GET', url: '/rank/boards', headers: { authorization: `Bearer ${userToken()}` } })
+    assert.equal(allowed.statusCode, 200)
+    const ok2 = (allowed.json() as { data: Record<string, unknown> }).data
+    assert.equal(ok2['unrestricted'], false)
+    assert.equal((ok2['sources'] as unknown[]).length, 1)
+
+    // 非法媒介 → 400（枚举不能拿 IsValidMedia 校验入参，空值也认）
+    const badMedia = await app.inject({
+      method: 'GET',
+      url: '/rank/boards?media=movie',
+      headers: { authorization: `Bearer ${adminToken()}` },
+    })
+    assert.equal(badMedia.statusCode, 400)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('留存同意位：关掉之后内容维度在写进明细之前就被抹掉（标识一起清）', async () => {
+  const { app, root } = await makeApp()
+  try {
+    const login = await app.inject({ method: 'POST', url: '/auth/login', payload: { username: 'u', password: 'u-pass' } })
+    const token = (login.json() as { data: { token: string } }).data.token
+    const off = await app.inject({
+      method: 'POST',
+      url: '/auth/privacy',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { content_consent: false },
+    })
+    assert.equal(off.statusCode, 200)
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/demo_one/content?bookId=b1&itemId=c1',
+      headers: { authorization: `Bearer ${token}` },
+    })
+    assert.equal(res.statusCode, 200)
+    // 响应照常给——留存是采集侧的事，不影响调用
+    assert.deepEqual(res.json(), { contentType: 'novel', data: { content: '正文' } })
+
+    const hist = await app.inject({
+      method: 'GET',
+      url: '/admin/monitor/history?username=u',
+      headers: { authorization: `Bearer ${adminToken()}` },
+    })
+    const row = (hist.json() as { data: { list: Array<Record<string, unknown>> } }).data.list[0]!
+    assert.equal(row['content_withheld'], true, '要能看出是「本人关掉了」，不是「没抽到」')
+    for (const k of ['keyword', 'book_name', 'chapter_title', 'media_type', 'book_ident', 'chapter_ident']) {
+      assert.equal(row[k], '', `${k} 必须被抹掉（标识也要清，否则回填循环会把它补回来）`)
+    }
+    // 成没成仍要留在读数里：它不是「用户读了什么」
+    assert.equal(row['status'], 200)
+    assert.equal(row['result_count'], 0)
   } finally {
     await app.close()
     rmSync(root, { recursive: true, force: true })

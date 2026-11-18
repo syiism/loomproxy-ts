@@ -2,11 +2,17 @@
 // 契约不变（迁移-TS-1 §5）；实现从"启动期逐条注册路由"改成"一个 catch-all 查表"，
 // 于是新插件加载完立刻可用（迁移-TS-4 §5）。
 import type { FastifyReply, FastifyRequest } from 'fastify'
-import { ClientCanceled, isUpstreamError, newSubject } from '@loomproxy/contract'
+import { ClientCanceled, isUpstreamError, newSubject, withholdContent } from '@loomproxy/contract'
 import type { Config, Logger, Upstream } from '@loomproxy/kernel'
 import type { Pool } from '@loomproxy/pool'
 import { Ledger, RateLimiter, accessMessage, contentKeyOf, sourceAccessVerdict } from '@loomproxy/gate'
-import { createFetchFacade, observeCall, stampSearchSource } from '@loomproxy/source-kit'
+import {
+  createFetchFacade,
+  observeCall,
+  stampSearchSource,
+  type NameCachePort,
+  type ObserveDecl,
+} from '@loomproxy/source-kit'
 import type {
   ApiKeyStore,
   CallLogStore,
@@ -46,7 +52,8 @@ export type DispatchDeps = {
   apiKeys?: ApiKeyStore
   users?: DbUsers
   quota?: DbQuota
-  nameCache?: { remember(kind: 'book' | 'chapter', source: string, ident: string, name: string): void }
+  /** 名称缓存（阅读记录的那一半：搜索/目录攒名字，正文按标识反查） */
+  nameCache?: NameCachePort
   quotaExtra?: { rateSpecFor(planId: number | null, source: string, action: string): { intervalMs?: number; count?: number; windowMs?: number } }
   blockedIPs?: { isBlocked(ip: string): boolean }
   /** 池运行时（packages/pool）：源通过 ctx.pool(name) 取号 */
@@ -155,6 +162,8 @@ export function createDispatcher(deps: DispatchDeps) {
       // 500：额度预检（每次现取成本与生效额度：面板改完立刻生效）
       const quota = deps.quota
       const user = identity.userId !== undefined ? deps.users?.byId(identity.userId) : undefined
+      // 留存同意位（隐私协议的实现点）：匿名/env 键没有用户对象，按默认档（同意）走
+      const withheld = user ? !user.content_consent : false
       const costRow = quota?.costOf(source, action)
       const cost = costRow && costRow.status === 1 ? costRow.cost : 0
       const since = user && quota ? quota.startOfWindow(user.id, deps.config.tzOffsetHours) : ''
@@ -230,13 +239,20 @@ export function createDispatcher(deps: DispatchDeps) {
       // 出口三处改写，顺序固定：观测 → 打标 → 带内脱敏
       // 观测要把源声明一起带上：单媒介源（如 fq_novel 声明 media_type=novel）的搜索响应里
       // 没有 bookTypeCode，不把声明当兜底就永远落成"未判定"（面板筛选/覆盖率全跟着错）。
-      observeCall(source, params, result, subject, {
+      // 名称缓存与留存同意位也在这里交给观测：攒名字、按标识回填书名/章节名（「阅读记录」），
+      // 关掉留存的用户则连缓存写口一起跳过（Go 的 ObserveCall 同口径）。
+      const decl: ObserveDecl = {
         ...(entry.meta.media_type ? { media: entry.meta.media_type } : {}),
         ...(entry.meta.search_tabs ? { searchTabs: entry.meta.search_tabs } : {}),
+      }
+      observeCall(source, params, result, subject, {
+        decl,
+        ...(deps.nameCache ? { nameCache: deps.nameCache } : {}),
+        withheld,
       })
-      // 名称进缓存：bookId/itemId 是标识，书名/章节名靠这里攒起来（回填与明细展示都读它）
-      if (subject.book_name) deps.nameCache?.remember('book', source, params['bookId'] ?? '', subject.book_name)
-      if (subject.chapter_title) deps.nameCache?.remember('chapter', source, params['itemId'] ?? '', subject.chapter_title)
+      // 留存闸的最后一道：内容维度写进明细之前就抹掉，此后进程外没有任何一份副本
+      // （不是"先落库、展示时再遮"）。in_band_* 保留：它说的是这次请求成没成。
+      if (withheld) Object.assign(subject, withholdContent(subject))
       if (action === 'search') result = stampSearchSource(result, source)
       result = scrubInBandMsg(result)
 

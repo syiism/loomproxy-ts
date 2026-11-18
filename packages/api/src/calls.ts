@@ -41,8 +41,10 @@ export function toCallLogRow(meta: CallMeta, status: number, nowIso: string): Om
     keyword: s.keyword,
     book_name: s.book_name,
     chapter_title: s.chapter_title,
-    book_ident: meta.params['bookId'] ?? '',
-    chapter_ident: meta.params['itemId'] ?? '',
+    // 标识从 subject 取而不是从请求参数取：用户关掉留存后 withholdContent 会把标识一起抹掉，
+    // 直接抄 params 等于给它留了第五面（明细照旧带着"他读了哪本书"）。
+    book_ident: s.book_key,
+    chapter_ident: s.chapter_key,
     media_type: s.media,
     result_count: s.result_count,
     content_withheld: s.content_withheld,

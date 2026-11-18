@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { SourceRegistry } from '../src/registry.ts'
 import { defineSource } from '../src/handler.ts'
 import { stampSearchSource } from '../src/present.ts'
-import { observeCall, type ObserveDecl } from '../src/observe.ts'
+import { observeCall, type NameCachePort, type ObserveDecl } from '../src/observe.ts'
 import { newSubject, withholdContent } from '@loomproxy/contract'
 
 const meta = {
@@ -99,17 +99,17 @@ test('媒介判定链：响应自带 → 请求 tab 声明 → 源默认声明 �
   }
 
   // ① 响应自带优先（单条目的类型字段大过源默认声明）
-  const own = observeCall('demo', { key: 'x' }, { bookList: [{ bookTypeCode: 2 }] }, newSubject(), decl)
+  const own = observeCall('demo', { key: 'x' }, { bookList: [{ bookTypeCode: 2 }] }, newSubject(), { decl })
   assert.equal(own.media, 'audio')
 
   // ② 响应没给 → 请求 tab 命中的声明（多媒介源：同一源不同 tab 不同形态）
-  const tab = observeCall('demo', { key: 'x', tabType: '4' }, { bookList: [{}] }, newSubject(), decl)
+  const tab = observeCall('demo', { key: 'x', tabType: '4' }, { bookList: [{}] }, newSubject(), { decl })
   assert.equal(tab.media, 'comic')
 
   // ③ tab 没命中（或请求没带 tab）→ 源默认声明；这才是单媒介源的真实现场
-  const def = observeCall('demo', { key: 'x' }, { bookList: [{}] }, newSubject(), decl)
+  const def = observeCall('demo', { key: 'x' }, { bookList: [{}] }, newSubject(), { decl })
   assert.equal(def.media, 'novel')
-  const list = observeCall('demo', { key: 'x', tabType: '9' }, { bookList: [{}] }, newSubject(), decl)
+  const list = observeCall('demo', { key: 'x', tabType: '9' }, { bookList: [{}] }, newSubject(), { decl })
   assert.equal(list.media, 'novel', 'tab 参数命中不到任何声明时回落到默认')
 
   // ④ 什么都没声明 → 空串（未判定是合法状态，不许编一个类型出来）
@@ -117,8 +117,50 @@ test('媒介判定链：响应自带 → 请求 tab 声明 → 源默认声明 �
   assert.equal(none.media, '')
 
   // 目录与正文同样吃声明兜底（正文 contentType 自己给了就以它为准）
-  const chapter = observeCall('demo', {}, { chapterList: [{}] }, newSubject(), decl)
+  const chapter = observeCall('demo', {}, { chapterList: [{}] }, newSubject(), { decl })
   assert.equal(chapter.media, 'novel')
-  const body = observeCall('demo', {}, { contentType: 'audio', data: { content: 'x' } }, newSubject(), decl)
+  const body = observeCall('demo', {}, { contentType: 'audio', data: { content: 'x' } }, newSubject(), { decl })
   assert.equal(body.media, 'audio')
+})
+
+test('阅读记录：列表攒名字、正文按标识回填；关掉留存则连缓存写口一起跳过', () => {
+  const mem = new Map<string, string>()
+  const cache: NameCachePort = {
+    rememberBook: (src, ident, name) => { if (ident && name) mem.set(`b:${src}:${ident}`, name) },
+    rememberChapter: (src, book, ident, title) => { if (book && ident && title) mem.set(`c:${src}:${book}|${ident}`, title) },
+    lookupBook: (src, ident) => mem.get(`b:${src}:${ident}`) ?? '',
+    lookupChapter: (src, book, ident) => mem.get(`c:${src}:${book}|${ident}`) ?? '',
+  }
+
+  // 搜索列表：每条的书名都要进缓存（用户接下来点开的就是其中一本）
+  observeCall('demo', { key: '三体' }, { bookList: [{ bookId: 'b1', name: '三体' }, { bookId: 'b2', name: '黑暗森林' }] }, newSubject(), { nameCache: cache })
+  assert.equal(cache.lookupBook('demo', 'b2'), '黑暗森林')
+  // 目录：章节名按「书+章」进缓存
+  observeCall('demo', { bookId: 'b1' }, { chapterList: [{ itemId: 'c1', title: '第一章' }] }, newSubject(), { nameCache: cache })
+  assert.equal(cache.lookupChapter('demo', 'b1', 'c1'), '第一章')
+  // 正文只带标识：书名与章名都要回填出来，标识也要落进 subject（明细的 book_ident/chapter_ident 取它）
+  const body = newSubject()
+  observeCall('demo', { bookId: 'b1', itemId: 'c1' }, { contentType: 'novel', data: { content: '正文' } }, body, { nameCache: cache })
+  assert.equal(body.book_key, 'b1')
+  assert.equal(body.chapter_key, 'c1')
+  assert.equal(body.book_name, '三体')
+  assert.equal(body.chapter_title, '第一章')
+  assert.equal(body.result_count, 1)
+
+  // 详情：书名进缓存（同一本书换个源进来只带 id 时也能标出来）
+  observeCall('demo', { bookId: 'b3' }, { bookId: 'b3', name: '死神永生', bookTypeCode: 0 }, newSubject(), { nameCache: cache })
+  assert.equal(cache.lookupBook('demo', 'b3'), '死神永生')
+
+  // 关掉留存：形状识别照跑（成没成要留在读数里），但写缓存一律跳过
+  const before = mem.size
+  const withheld = newSubject()
+  withheld.content_withheld = true
+  observeCall('demo', { bookId: 'b9' }, { bookId: 'b9', name: '不该进缓存', bookTypeCode: 0 }, withheld, { nameCache: cache, withheld: true })
+  assert.equal(mem.size, before, 'withheld 时不许写命名缓存')
+  assert.equal(withheld.book_name, '不该进缓存', '抽取本身照跑（写明细时再由 withholdContent 抹）')
+
+  // 章标识里带着书标识（URL 形态）：正文只带 itemId 时也要能把书认出来
+  const url = newSubject()
+  observeCall('demo', { itemId: 'https://x/c?bookId=b7&itemId=c7' }, { contentType: 'novel', data: { content: 'x' } }, url, { nameCache: cache })
+  assert.equal(url.book_key, 'b7', '从章标识里拆出书标识（Go 的 BookIdentFromChapterKey 同口径）')
 })

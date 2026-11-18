@@ -2,8 +2,11 @@
 // 额度/卡密/分组/定时/IP/设备/接口消耗属"未接域"：显式 501 并说清是哪个域，
 // 面板会把 msg 原样 toast 出来——不假造成功。
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { fail, ok } from '@loomproxy/contract'
-import { clampPage, clampPageSize } from '@loomproxy/kernel'
+import {
+  MEDIA, RANK_BOARDS, fail, isValidMedia, isValidSubjectDim, mediaLabel, ok,
+  type RankBoard, type SubjectCoverageRow, type SubjectItem,
+} from '@loomproxy/contract'
+import { TtlCache, clampPage, clampPageSize, createClock } from '@loomproxy/kernel'
 import type { Config } from '@loomproxy/kernel'
 import { resolveIdentity } from './auth.ts'
 import { resetAttempts, snapshot } from './login-limiter.ts'
@@ -32,6 +35,12 @@ async function requireAdmin(req: FastifyRequest, reply: FastifyReply, deps: Deps
     return undefined
   }
   return id
+}
+
+/** 平台时区日界的窗口起点：当日零点往前推 days-1 天（与 Go 的 WindowStart 同口径） */
+function windowSince(tzOffsetHours: number, days: number): string {
+  const clock = createClock(tzOffsetHours)
+  return new Date(clock.startOfDay() - (Math.max(1, days) - 1) * 86_400_000).toISOString()
 }
 
 /** 公开榜单放行名单存在设置项 rank_public_sources 里（逗号分隔），不是源行上的列 */
@@ -67,6 +76,9 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
     reply.code(n.status).send(fail(config.errorCode, n.msg))
   }
   const guard = async (req: FastifyRequest, reply: FastifyReply) => (await requireAdmin(req, reply, deps)) !== undefined
+  // 公开榜的聚合结果缓存（RankCacheSec<=0 每次真算）。键含"谁在看"那一段：
+  // 管理员（不限源）与公开榜（按白名单）共用键段就等于把未授权源的热度漏给普通用户。
+  const boardsCache = new TtlCache<RankBoard[]>({ maxEntries: 64, ttlMs: Math.max(0, config.rankCacheSec) * 1000 })
 
   // ---- 总览 ----
   app.get('/admin/stats', async (req, reply) => {
@@ -772,12 +784,45 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
     )
   })
 
+  // 内容维度榜（管理端）：面板「监控 → 内容维度」读 `data.items` / `data.coverage` / `data.name_cache`。
+  // 回裸数组会让整段（含覆盖率体检与缓存读数）一起空白——与「设置页空白」是同一族错。
   app.get('/admin/monitor/subjects', async (req, reply) => {
     if (!(await guard(req, reply))) return
     const q = req.query as Record<string, string>
-    const logs = stores.callLogs as unknown as { subjects?: (dim: string, days: number) => unknown[] }
-    const days = Math.max(1, Number(q['days'] ?? 7) || 7)
-    return ok(logs?.subjects?.(q['dim'] ?? 'keyword', days) ?? [])
+    if (!stores.callLogs) return unavailable(reply, '调用明细存储未接')
+    const dim = (q['dim'] ?? 'keyword').trim().toLowerCase()
+    if (!isValidSubjectDim(dim)) {
+      reply.code(400).send(fail(config.errorCode, 'dim 只接受 keyword/book/chapter/media'))
+      return
+    }
+    // 天数收敛：越界回落 7，上限 365（与 Go 的 NormalizeDays 同口径）
+    const rawDays = Math.trunc(Number(q['days'] ?? 7) || 7)
+    const days = rawDays < 1 || rawDays > 365 ? 7 : rawDays
+    const media = (q['media'] ?? '').trim()
+    if (media && !isValidMedia(media)) {
+      reply.code(400).send(fail(config.errorCode, 'media 不是合法媒介（novel/audio/comic/video）'))
+      return
+    }
+    const source = (q['source'] ?? '').trim()
+    const since = windowSince(config.tzOffsetHours, days)
+    const items = stores.callLogs.subjects({ dim, since, ...(source ? { source } : {}), ...(media ? { media } : {}), limit: 50 })
+    // 覆盖率统计失败不该让整页挂掉：榜本身还能看，失败由 coverage_error 如实说出来
+    let coverage: SubjectCoverageRow[] = []
+    let coverageError = false
+    try {
+      coverage = stores.callLogs.coverage({ since, ...(source ? { source } : {}) })
+    } catch {
+      coverageError = true
+    }
+    return ok({
+      dim,
+      days,
+      from: since,
+      items,
+      coverage,
+      coverage_error: coverageError,
+      name_cache: stores.nameCache?.stats() ?? { books: 0, chapters: 0 },
+    })
   })
 
   app.post('/admin/monitor/reset', async (req, reply) => {
@@ -836,16 +881,88 @@ h1{font-size:18px}code{font-family:ui-monospace,Menlo,monospace}</style>
     return ok(stores.pools?.statusAll() ?? [])
   })
 
-  // ---- 公开榜（登录用户可读）：直接按明细聚合 ----
+  // ---- 公开榜（登录用户可读） ----
+  // 形状与 Go 的 handlers/rank 一致：面板读 `data.boards[].rows[]` 与 `data.sources/medias`。
+  // 只给名称/次数（阅读榜另带书目标识），**不给**时间与用户——明细是敏感数据，
+  // 排障视角（成功率/耗时/来源）只在管理端那张榜上。
   app.get('/rank/boards', async (req, reply) => {
     const id = await resolveIdentity(req, config, deps.stores ?? {})
     if (id.userId === undefined) {
       reply.code(401).send(fail(401, '请先登录'))
       return
     }
+    if (!stores.callLogs) return unavailable(reply, '调用明细存储未接')
     const q = req.query as Record<string, string>
-    const logs = stores.callLogs as unknown as { subjects?: (dim: string, days: number) => unknown[] }
-    return ok({ dim: 'keyword', days: Number(q['days'] ?? 7), list: logs?.subjects?.('keyword', Number(q['days'] ?? 7)) ?? [] })
+    const isAdmin = id.roles.includes('admin')
+    // 白名单留空 = 不对普通用户开放任何榜单；管理员始终能看（否则开关一关，自己也没法验证）
+    const allow = isAdmin ? undefined : [...rankPublicSet(stores.settings)]
+    if (allow !== undefined && allow.length === 0) {
+      reply.code(403).send(fail(403, '榜单未开放'))
+      return
+    }
+    const rawDays = Number(q['days'] ?? 7)
+    const days = rawDays === 1 || rawDays === 7 || rawDays === 30 ? rawDays : 7
+    let sourceFilter = (q['source'] ?? '').trim()
+    // 候选源只取启用中的（下架一个源，下拉框里不该还留着它）
+    let sources = (deps.dataSources?.listEnabled() ?? []).map((r) => ({ code: r.name, name: r.display_name }))
+    if (sourceFilter) {
+      if (!sources.some((o) => o.code === sourceFilter)) {
+        reply.code(400).send(fail(400, 'source 不是启用中的数据源'))
+        return
+      }
+      if (allow !== undefined && !allow.includes(sourceFilter)) {
+        reply.code(403).send(fail(403, '该数据源的榜单未开放'))
+        return
+      }
+    }
+    const mediaFilter = (q['media'] ?? '').trim()
+    if (mediaFilter && !isValidMedia(mediaFilter)) {
+      reply.code(400).send(fail(400, 'media 不是合法媒介（novel/audio/comic/video）'))
+      return
+    }
+    // 非管理员看到的候选也只剩被开放的源——列未开放的源本身就是信息
+    if (allow !== undefined) sources = sources.filter((o) => allow.includes(o.code))
+
+    const ttlSec = Math.max(0, config.rankCacheSec)
+    const cacheKey = `${isAdmin ? 'all' : `pub:${[...(allow ?? [])].sort().join(',')}`}:${days}:${sourceFilter}:${mediaFilter}`
+    let boards = ttlSec > 0 ? boardsCache.get(cacheKey) : undefined
+    if (!boards) {
+      const since = windowSince(config.tzOffsetHours, days)
+      boards = RANK_BOARDS.map((b): RankBoard => {
+        const items: SubjectItem[] = stores.callLogs!.subjects({
+          dim: b.dim,
+          since,
+          ...(sourceFilter ? { source: sourceFilter } : {}),
+          ...(mediaFilter ? { media: mediaFilter } : {}),
+          limit: 20,
+          ...(allow !== undefined ? { allowSources: allow } : {}),
+        })
+        return {
+          dim: b.dim,
+          title: b.title,
+          unit: b.unit,
+          metric: b.metric,
+          rows: items.filter((it) => it.name !== '').map((it) => ({
+            name: it.name,
+            total: it.total,
+            ...(it.book_id ? { book_id: it.book_id } : {}),
+          })),
+        }
+      })
+      // 写不进缓存最坏只是"下次照样真算"；只缓存榜单行，不缓存 sources/medias（那是数据源表的当前态）
+      if (ttlSec > 0) boardsCache.set(cacheKey, boards)
+    }
+    return ok({
+      days,
+      boards,
+      limit: 20,
+      source: sourceFilter,
+      sources,
+      unrestricted: isAdmin,
+      media: mediaFilter,
+      medias: MEDIA.map((value) => ({ value, label: mediaLabel(value) })),
+      cache_ttl_sec: ttlSec,
+    })
   })
 
   // ---- 用量流水与接口消耗 ----

@@ -1,10 +1,25 @@
 // 设置 / 数据源 / 调用明细的 SQLite 实现（接口与内存版同名同义）。
-import type { CallLogPage, CallLogQuery, CallLogRow, SettingDecl, SettingType, SourceMeta } from '@loomproxy/contract'
-import { isValidSettingType } from '@loomproxy/contract'
+import type {
+  CallLogPage, CallLogQuery, CallLogRow, MediaOrEmpty, SettingDecl, SettingType, SourceMeta,
+  SubjectCoverageRow, SubjectDim, SubjectItem, SubjectWindowQuery,
+} from '@loomproxy/contract'
+import { isValidSettingType, mediaLabel } from '@loomproxy/contract'
 import { SqliteDb, bool, boolInt, nowIso, type SqlValue } from './sqlite.ts'
 import type { DataSourceRow, DataSourceStore } from './data-sources.ts'
 import type { CallLogStore, NewCallLog } from './call-logs.ts'
 import type { SettingsStore, SettingRow } from './settings.ts'
+
+/** 维度 → 列与统计口径（唯一映射表；请求可控的只是键） */
+const SUBJECT_DIM_COLUMNS: Record<
+  SubjectDim,
+  { column: string; onlyPresent: boolean; onlyActions: string[]; byVisitors: boolean }
+> = {
+  keyword: { column: 'keyword', onlyPresent: true, onlyActions: [], byVisitors: false },
+  book: { column: 'book_name', onlyPresent: true, onlyActions: ['content'], byVisitors: true },
+  chapter: { column: 'chapter_title', onlyPresent: true, onlyActions: ['content'], byVisitors: false },
+  // 媒介要的是全量分布（"这一站有多少听书"），未判定的空值也要数
+  media: { column: 'media', onlyPresent: false, onlyActions: [], byVisitors: false },
+}
 
 export class DbSettings implements SettingsStore {
   private readonly db: SqliteDb
@@ -254,15 +269,155 @@ export class DbCallLogs implements CallLogStore {
     )
   }
 
-  /** 内容维度榜（dim: keyword|book|chapter|media） */
-  subjects(dim: string, days: number): Array<{ name: string; count: number }> {
-    const col = dim === 'book' ? 'book_name' : dim === 'chapter' ? 'chapter_title' : dim === 'media' ? 'media' : 'keyword'
-    const since = new Date(Date.now() - days * 86_400_000).toISOString()
-    return this.db.all<{ name: string; count: number }>(
-      `SELECT ${col} AS name, COUNT(*) AS count FROM api_call_logs
-        WHERE ${col} <> '' AND created_at >= ? GROUP BY ${col} ORDER BY count DESC LIMIT 50`,
-      since,
+  /**
+   * 内容维度榜（阅读记录）：dim 白名单在契约里，列名只取自本表 —— 请求可控的只是维度键，
+   * 拼进 SQL 的列名永远是下面这张映射里取出来的字面量，值一律走绑定参数。
+   *
+   * 两条口径与 Go 的 subjectrank 对齐，缺了就会"记录了但榜上是错的"：
+   * ① book/chapter 只统计 content：一次打开书目会连着产生 detail 与多页目录，
+   *    全计入等于把同一本书凭空乘上几倍；
+   * ② 书名维度的排名数字用**同数据源内的访问人数**（按 username 去重、匿名退到 IP）：
+   *    一条正文明细只是一章，按次数排等于把"谁在读"写成"被翻了多少章"。
+   */
+  subjects(q: SubjectWindowQuery): SubjectItem[] {
+    const dim = SUBJECT_DIM_COLUMNS[q.dim]
+    if (!dim) return []
+    const where: string[] = ['created_at >= ?']
+    const params: SqlValue[] = [q.since]
+    if (dim.onlyPresent) where.push(`${dim.column} <> ''`)
+    if (dim.onlyActions.length > 0) where.push(`action IN (${dim.onlyActions.map(() => '?').join(',')})`)
+    if (dim.onlyActions.length > 0) params.push(...dim.onlyActions)
+    if (q.source) { where.push('source = ?'); params.push(q.source) }
+    if (q.media) { where.push('media = ?'); params.push(q.media) }
+    if (q.allowSources !== undefined) {
+      // 白名单是空集 = 没有任何源可见（不必查库）；非 undefined 即生效
+      if (q.allowSources.length === 0) return []
+      where.push(`source IN (${q.allowSources.map(() => '?').join(',')})`)
+      params.push(...q.allowSources)
+    }
+    const identCol = q.dim === 'book' ? ', MAX(CASE WHEN book_ident <> \'\' THEN id ELSE 0 END) AS ident_id' : ''
+    const rows = this.db.all<Record<string, SqlValue>>(
+      `SELECT ${dim.column} AS name, source,
+              COUNT(*) AS requests,
+              COUNT(DISTINCT COALESCE(NULLIF(username, ''), ip)) AS visitors,
+              SUM(CASE WHEN status >= 200 AND status < 300 AND in_band_error = 0 THEN 1 ELSE 0 END) AS success,
+              COALESCE(SUM(latency_ms), 0) AS latency,
+              COALESCE(MAX(latency_ms), 0) AS max_latency,
+              SUM(CASE WHEN status >= 200 AND status < 300 AND result_count = 0 THEN 1 ELSE 0 END) AS empty_count,
+              MAX(id) AS last_id${identCol}
+         FROM api_call_logs
+        WHERE ${where.join(' AND ')}
+        GROUP BY ${dim.column}, source`,
+      ...params,
     )
+
+    // 跨源合并：人数不能直接相加（同一个人既读过 A 源又读过 B 源会被数两次），
+    // 但每一行本来是"同一源内去重"的人数，按源相加正是面板口径说明里那句"跨源相加不再去重"
+    type Acc = {
+      requests: number; visitors: number; success: number; latency: number; max: number; empty: number
+      sources: Set<string>; lastId: number; identId: number
+    }
+    const merged = new Map<string, Acc>()
+    for (const r of rows) {
+      const name = String(r['name'] ?? '')
+      if (!name) continue
+      const acc = merged.get(name) ?? {
+        requests: 0, visitors: 0, success: 0, latency: 0, max: 0, empty: 0,
+        sources: new Set<string>(), lastId: 0, identId: 0,
+      }
+      acc.requests += Number(r['requests'] ?? 0)
+      acc.visitors += Number(r['visitors'] ?? 0)
+      acc.success += Number(r['success'] ?? 0)
+      acc.latency += Number(r['latency'] ?? 0)
+      acc.max = Math.max(acc.max, Number(r['max_latency'] ?? 0))
+      acc.empty += Number(r['empty_count'] ?? 0)
+      if (String(r['source'] ?? '')) acc.sources.add(String(r['source']))
+      acc.lastId = Math.max(acc.lastId, Number(r['last_id'] ?? 0))
+      acc.identId = Math.max(acc.identId, Number(r['ident_id'] ?? 0))
+      merged.set(name, acc)
+    }
+
+    // 榜尾两栏（最近调用、书目标识）整页一次点查取回，不在循环里逐条查
+    const idSet = new Set<number>()
+    for (const a of merged.values()) { if (a.lastId) idSet.add(a.lastId); if (a.identId) idSet.add(a.identId) }
+    const byId = new Map<number, { created_at: string; book_ident: string }>()
+    if (idSet.size > 0) {
+      const ids = [...idSet]
+      for (const r of this.db.all<Record<string, SqlValue>>(
+        `SELECT id, created_at, book_ident FROM api_call_logs WHERE id IN (${ids.map(() => '?').join(',')})`,
+        ...ids,
+      )) {
+        byId.set(Number(r['id']), { created_at: String(r['created_at'] ?? ''), book_ident: String(r['book_ident'] ?? '') })
+      }
+    }
+
+    const items: SubjectItem[] = []
+    for (const [name, a] of merged) {
+      if (a.requests === 0) continue
+      const total = dim.byVisitors ? a.visitors : a.requests
+      const item: SubjectItem = {
+        name,
+        ...(q.dim === 'media' ? { label: mediaLabel(name as MediaOrEmpty) } : {}),
+        total,
+        visitors: a.visitors,
+        requests: a.requests,
+        success: a.success,
+        failed: a.requests - a.success,
+        // 成功率与平均耗时一律按**请求**算：人数当分母会把"一个人读三十章"的失败率稀释成三十分之一
+        success_rate: a.requests > 0 ? (a.success / a.requests) * 100 : 0,
+        avg_latency_ms: a.requests > 0 ? Math.trunc(a.latency / a.requests) : 0,
+        max_latency_ms: a.max,
+        empty_results: a.empty,
+        sources: [...a.sources].sort(),
+      }
+      const last = a.lastId ? byId.get(a.lastId) : undefined
+      if (last?.created_at) item.last_called_at = last.created_at
+      if (dim.byVisitors && a.identId) {
+        const ident = byId.get(a.identId)?.book_ident ?? ''
+        if (ident) item.book_id = ident
+      }
+      items.push(item)
+    }
+    items.sort((x, y) => (y.total - x.total) || x.name.localeCompare(y.name))
+    const limit = q.limit ?? 0
+    return limit > 0 ? items.slice(0, limit) : items
+  }
+
+  /**
+   * 内容维度覆盖率（源 × 接口）：哪一格常年不满，先看同行的失败与带内失败。
+   * 缺格有两种合理成因，必须分开报，否则读数会替它们背锅：
+   * 失败/带内失败五维本来就全空；用户自己关掉留存（withheld）也不进分母。
+   */
+  coverage(q: { since: string; source?: string }): SubjectCoverageRow[] {
+    const where: string[] = ['created_at >= ?']
+    const params: SqlValue[] = [q.since]
+    if (q.source) { where.push('source = ?'); params.push(q.source) }
+    return this.db.all<Record<string, SqlValue>>(
+      `SELECT source, action, COUNT(*) AS rows,
+              SUM(CASE WHEN book_name <> '' THEN 1 ELSE 0 END) AS has_book_name,
+              SUM(CASE WHEN book_ident <> '' THEN 1 ELSE 0 END) AS has_book_ident,
+              SUM(CASE WHEN chapter_title <> '' THEN 1 ELSE 0 END) AS has_chapter_title,
+              SUM(CASE WHEN media <> '' THEN 1 ELSE 0 END) AS has_media,
+              SUM(CASE WHEN status >= 400 OR in_band_error = 1 THEN 1 ELSE 0 END) AS failed,
+              SUM(CASE WHEN in_band_error = 1 THEN 1 ELSE 0 END) AS in_band_failed,
+              SUM(CASE WHEN content_withheld = 1 THEN 1 ELSE 0 END) AS withheld
+         FROM api_call_logs WHERE ${where.join(' AND ')}
+        GROUP BY source, action ORDER BY source, action`,
+      ...params,
+    ).map((r) => ({
+      source: String(r['source'] ?? ''),
+      action: String(r['action'] ?? ''),
+      rows: Number(r['rows'] ?? 0),
+      has_book_name: Number(r['has_book_name'] ?? 0),
+      has_book_ident: Number(r['has_book_ident'] ?? 0),
+      has_chapter_title: Number(r['has_chapter_title'] ?? 0),
+      has_media: Number(r['has_media'] ?? 0),
+      failed: Number(r['failed'] ?? 0),
+      in_band_failed: Number(r['in_band_failed'] ?? 0),
+      withheld: Number(r['withheld'] ?? 0),
+      // search/explore 本就没有"这一本"，空不是缺陷
+      expect_book: !['search', 'explore'].includes(String(r['action'] ?? '')),
+    }))
   }
 
   /** 按天 × 源的调用趋势（面板趋势图；读的是明细，聚合表没有时间维度） */

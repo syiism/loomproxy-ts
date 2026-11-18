@@ -255,6 +255,26 @@ Kind   = "" | "burn_wall_clock" | "spread"
 抽取规则（`legado.ObserveCall`）：`bookList`→搜词+书名灌缓存；`bookInfo`→书名/媒介；
 `chapterList`→条数；正文→`contentType` 判媒介、`content` 非空记 1。**空串 = 没抽到，不是错误。**
 
+**阅读记录（书名/章节名）靠「标识 → 名称」缓存跨请求接续**，这是三处实现，少一处就只剩详情页有书名：
+
+1. **攒名字**：`bookList` 里每一条都进缓存（用户接下来点的就是其中一本）；`chapterList` 里每一条
+   章节名进缓存。章节键必须是 **`书标识|章标识`** 的复合键——章节标识多数只在书内唯一，
+   只用 itemId 会把 A 书的第 3 章标题填进 B 书（`name_cache` 的拼法只有一处）。
+2. **回填**：正文/目录请求通常只带 `bookId/itemId`，抽取末尾按标识回查，把书名/章节名补进
+   subject（`book_ident/chapter_ident` 也取 subject 里的键，不直接抄请求参数）。
+3. **落库后回填**：`POST /admin/monitor/backfill-subjects` 按缓存补齐历史行里空着的名称
+   （键的拼法与第 1 步一致，分家就等于"缓存有值、明细分永远空"）。
+
+**留存同意位是最后一道闸**：用户关掉留存时，抽取照跑（成没成要留在读数里），
+但① 命名缓存写口一律跳过（否则"当场说不捕获、下一轮被自己补回来"），
+② 写明细前 `withholdContent()` 把搜索词/书名/章节名/媒介/计数与两个标识一起抹掉，
+`content_withheld=1` 让"本人关掉"与"没抽到"分得开。
+
+**榜单口径（管理端与公开榜共用一份聚合）**：`visitors` 是同数据源内按访问者去重的**人数**
+（注册用户按用户名，匿名退到 IP，跨源相加不再去重），`requests` 是调用条数；
+书名维度的排名数字取**人数**（一条正文明细只是一章，按次数排等于把"谁在读"写成"被翻了多少章"），
+其余维度取条数；成功率与平均耗时一律按请求算。`book/chapter` 两个维度只统计 `content`。
+
 媒介这一格不是“能抽到就抽到”的尽力而为，而是一条**判定链**（优先级从高到低）：
 ① 响应自带（条目的 `bookTypeCode` / 详情的 `bookType` / 正文的 `contentType`）
 → ② 请求 tab 命中的源声明（`SearchTab.media_type`）
@@ -272,6 +292,31 @@ in_band_reason, in_band_code, latency_ms, created_at, keyword, book_name, chapte
 book_ident, chapter_ident, media_type, result_count, content_withheld, **plugin_version**`
 （最后一格是 ④ §7 批准的：热更新之后要能按版本切分读数；空 = 非插件路径/旧行）；
 聚合归档表 `api_call_stats(source, action, total, success, failed, total_latency_ms, max_latency_ms)`。
+
+两个消费端的形状（回裸数组会让整段空白）：
+
+```jsonc
+// GET /admin/monitor/subjects?dim=keyword|book|chapter|media&days=7&source=&media=
+{ "dim":"book","days":7,"from":"<窗口起点 ISO>",
+  "items":[{"name":"…","total":1,"visitors":1,"requests":2,"success":2,"failed":0,
+            "success_rate":100,"avg_latency_ms":484,"max_latency_ms":534,"empty_results":0,
+            "sources":["fq_novel"],"last_called_at":"…","book_id":"…"}],
+  "coverage":[{"source":"…","action":"content","rows":2,"has_book_name":2,"has_book_ident":2,
+               "has_chapter_title":2,"has_media":2,"failed":0,"in_band_failed":0,
+               "withheld":0,"expect_book":true}],
+  "coverage_error":false, "name_cache":{"books":10,"chapters":104} }
+
+// GET /rank/boards?days=1|7|30&source=&media=（登录用户；白名单 rank_public_sources 留空=普通用户 403）
+{ "days":7,"limit":20,"source":"","unrestricted":false,
+  "boards":[{"dim":"keyword","title":"搜索热词榜","unit":"次","metric":"搜索次数","rows":[{"name":"…","total":3}]},
+            {"dim":"book","title":"阅读榜","unit":"人","metric":"访问人数（同数据源内按用户去重）",
+             "rows":[{"name":"…","total":1,"book_id":"…"}]}],
+  "sources":[{"code":"fq_novel","name":"番茄小说"}],
+  "medias":[{"value":"novel","label":"小说"}],"cache_ttl_sec":60 }
+```
+
+公开榜**只给名称/次数（阅读榜另给 `book_id`）**：明细含用户阅读行为，成功率/耗时/来源/时间
+那一套排障字段只在管理端那张榜上。
 
 `content_withheld` 的语义是"**用户自己关掉了留存**"，不是"没抽到"——两个"全空"必须分得开，
 否则覆盖率读数会替用户的选择背锅。`WithholdContent()` 要连 `book_key/chapter_key` 一起清

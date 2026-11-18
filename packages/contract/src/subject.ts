@@ -1,7 +1,7 @@
 // 观测的内容维度（迁移-TS-2 §8）：空串 = 没抽到，不是错误。
 import type { MediaOrEmpty } from './media.ts'
 
-export const SUBJECT_FIELD_MAX = { keyword: 128, bookName: 160, chapterTitle: 255 } as const
+export const SUBJECT_FIELD_MAX = { keyword: 128, bookName: 160, chapterTitle: 255, ident: 512 } as const
 
 export type CallSubject = {
   keyword: string
@@ -47,6 +47,9 @@ export function clipSubject(s: CallSubject): CallSubject {
     keyword: clip(s.keyword, SUBJECT_FIELD_MAX.keyword),
     book_name: clip(s.book_name, SUBJECT_FIELD_MAX.bookName),
     chapter_title: clip(s.chapter_title, SUBJECT_FIELD_MAX.chapterTitle),
+    // 标识既用于查缓存，也随明细落库（供事后回填名称）：不截就会把一整条 URL 塞进索引列
+    book_key: clip(s.book_key, SUBJECT_FIELD_MAX.ident),
+    chapter_key: clip(s.chapter_key, SUBJECT_FIELD_MAX.ident),
   }
 }
 
