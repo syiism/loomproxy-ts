@@ -9,7 +9,13 @@ import type { BridgeError, BridgeFromWorker, FetchKind, FetchOpts } from './brid
 export type WorkerHostDeps = {
   logger: Logger
   upstream: Upstream
-  settings: { get(key: string): string; list?(): Array<{ key: string; value: string }>; sensitiveKeys?(): string[] }
+  settings: {
+    get(key: string): string
+    list?(): Array<{ key: string; value: string }>
+    /** 含敏感键真值的快照（worker 里的源要能读到自己的密钥；list() 是面板视角，值被抹过） */
+    rawValues?(): Record<string, string>
+    sensitiveKeys?(): string[]
+  }
   pools?: { get(name: string): { acquire(): Promise<unknown>; report(e: unknown): void; cooldown(i: string, u?: number, n?: string): void; success(): void } | undefined }
   /** 单次调用上限（超时即终止 worker：卡死的线程收不回来） */
   callTimeoutMs?: number
@@ -109,6 +115,9 @@ export class WorkerPluginHost {
   }
 
   private settingsSnapshot(): Record<string, string> {
+    // 优先用 rawValues：list() 会把敏感键抹成空串，worker 里的源就再也读不到自己声明的密钥
+    const raw = this.deps.settings.rawValues?.()
+    if (raw) return raw
     const out: Record<string, string> = {}
     // 每次调用现读：热配置语义（改了不重启就生效）
     for (const row of this.deps.settings.list?.() ?? []) out[row.key] = row.value

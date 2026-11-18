@@ -50,6 +50,11 @@ function makePluginDir(): string {
         required_params: { content: ['itemId'] },
         media_type: 'novel',
         search_tabs: [{ tab_type: 3, bd_id: '2', name: '小说', media_type: 'novel' }],
+        // 源声明的设置项（自注册）：一个普通键 + 一个敏感键（源自己要能读到，面板只写不回显）
+        settings: [
+          { key: 'demo_mode', type: 'string', default: 'v1', description: '演示开关' },
+          { key: 'demo_secret', type: 'string', default: 's3', description: '演示密钥', sensitive: true },
+        ],
       },
     }),
   )
@@ -61,7 +66,8 @@ function makePluginDir(): string {
        detail: async (ctx) => ({ bookId: ctx.params.bookId ?? 'b1', name: '真实书名', author: 'a',
          bookTypeCode: 8, bookType: 'novel', coverUrl: '', intro: '', wordCount: '', lastChapter: '',
          chapterCount: 2, kind: '', status: '' }),
-       chapter: async () => ({ chapterList: [{ title: '第一章', itemId: 'c1' }, { title: '第二章', itemId: 'c2' }] }),
+       chapter: async (ctx) => ({ chapterList: [{ title: '第一章', itemId: 'c1' }, { title: '第二章', itemId: 'c2' }],
+         secret: ctx.settings.get('demo_secret'), mode: ctx.settings.get('demo_mode') }),
        content: async () => ({ contentType: 'novel', data: { content: '正文' } }),
      } }`,
   )
@@ -551,6 +557,48 @@ test('授权即准入：匿名没有免费档授权 → need_login；用户套�
       headers: { authorization: `Bearer ${adminToken()}` },
     })
     assert.equal(admin.statusCode, 200)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('源设置自注册：声明位落库（幂等不覆盖）、面板带 source 归属、敏感键只写不回显但源读得到', async () => {
+  const { app, root, host, settings } = await makeApp()
+  try {
+    // ① 声明位落库：默认值来自 manifest（不止内置那 29 条）
+    assert.equal(settings.get('demo_mode'), 'v1')
+    assert.equal(settings.get('demo_secret'), 's3', '源自己要能读到敏感键的真值')
+
+    // ② 面板视角：值被抹掉、名单给出、并带上「谁声明的」——面板据此按源成卡
+    const res = await app.inject({
+      method: 'GET',
+      url: '/admin/settings',
+      headers: { authorization: `Bearer ${adminToken()}` },
+    })
+    const data = (res.json() as {
+      data: { items: Array<{ key: string; value: string; source?: string; source_display?: string }>; sensitive_keys: string[] }
+    }).data
+    const secret = data.items.find((i) => i.key === 'demo_secret')!
+    assert.equal(secret.value, '', '敏感键不下发值（只写不回显）')
+    assert.equal(secret.source, 'demo_one')
+    assert.equal(secret.source_display, '演示一号')
+    assert.ok(data.sensitive_keys.includes('demo_secret'))
+    const mode = data.items.find((i) => i.key === 'demo_mode')!
+    assert.equal(mode.value, 'v1')
+    assert.equal(mode.source, 'demo_one')
+
+    // ③ 源真的拿得到：数据面响应里带着两个键的值
+    const body = await app.inject({ method: 'GET', url: '/demo_one/chapter?bookId=b1' })
+    const out = body.json() as { secret?: string; mode?: string }
+    assert.equal(out.secret, 's3')
+    assert.equal(out.mode, 'v1')
+
+    // ④ 再扫一遍（热更新/重启同一条路）：不覆盖管理员改过的值，只对账类型与说明
+    settings.set('demo_mode', 'v2')
+    await host.scanSync()
+    assert.equal(settings.get('demo_mode'), 'v2')
+    assert.equal(settings.get('demo_secret'), 's3')
   } finally {
     await app.close()
     rmSync(root, { recursive: true, force: true })

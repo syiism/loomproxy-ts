@@ -1,14 +1,22 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createServer } from 'node:http'
+import { connect } from 'node:net'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   CircuitBreaker,
   SingleFlight,
   TtlCache,
+  UA_ROTATE,
+  Upstream,
   clampPage,
   clampPageSize,
   headersKey,
   loadConfig,
   parseDotEnv,
+  proxyEnabledFor,
   silentLogger,
 } from '../src/index.ts'
 import { scrubQuery } from '@loomproxy/contract'
@@ -98,4 +106,126 @@ test('分页夹只有一处：非法/越界页码回 1', () => {
   assert.equal(clampPage('2.5'), 1)
   assert.equal(clampPage('7'), 7)
   assert.equal(clampPageSize('999'), 100)
+})
+
+// ==== 代理池 / UA 轮换（env 来的两个配置真的生效吗） ====
+
+/** 极简 HTTP 正向代理：undici 的 ProxyAgent 走 CONNECT 隧道 */
+async function startTunnelProxy() {
+  const tunnels: string[] = []
+  const server = createServer((_req, res) => {
+    res.writeHead(405)
+    res.end()
+  })
+  server.on('connect', (req, socket, head) => {
+    tunnels.push(req.url ?? '')
+    const [host, port] = (req.url ?? '').split(':')
+    const up = connect(Number(port), host === 'localhost' ? '127.0.0.1' : (host as string), () => {
+      socket.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+      if (head?.length) up.write(head)
+      up.pipe(socket)
+      socket.pipe(up)
+    })
+    up.on('error', () => socket.destroy())
+    socket.on('error', () => up.destroy())
+  })
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
+  const address = server.address()
+  const port = typeof address === 'object' && address ? address.port : 0
+  return { server, tunnels, url: `http://127.0.0.1:${port}` }
+}
+
+async function startUpstreamTarget() {
+  const hits: Array<{ ua: string | undefined }> = []
+  const server = createServer((req, res) => {
+    hits.push({ ua: req.headers['user-agent'] })
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ ok: true }))
+  })
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
+  const address = server.address()
+  const port = typeof address === 'object' && address ? address.port : 0
+  return { server, hits, url: `http://127.0.0.1:${port}/api` }
+}
+
+test('IP 代理：UPSTREAM_PROXIES 与 UPSTREAM_PROXY_FILE 都真的走代理（# 注释、热加载）', async () => {
+  const proxy = await startTunnelProxy()
+  const target = await startUpstreamTarget()
+  const dir = mkdtempSync(join(tmpdir(), 'loomproxy-proxy-'))
+  const cfg = (extra: Record<string, string> = {}) => loadConfig({ JWT_SECRET: 'x'.repeat(32), ...extra })
+  try {
+    // 直连基线
+    {
+      const up = new Upstream({ config: cfg(), logger: silentLogger() })
+      assert.deepEqual(await up.fetchJson(target.url), { ok: true })
+      assert.equal(proxy.tunnels.length, 0)
+    }
+    // env 名单
+    {
+      const up = new Upstream({ config: cfg({ UPSTREAM_PROXIES: proxy.url }), logger: silentLogger() })
+      assert.deepEqual(await up.fetchJson(target.url), { ok: true })
+      assert.equal(proxy.tunnels.length, 1, 'UPSTREAM_PROXIES 必须真的把请求交给代理')
+    }
+    // 文件（含注释行）+ 热加载：改文件后不重启也要生效
+    {
+      const file = join(dir, 'proxies.txt')
+      writeFileSync(file, '# 注释\n\n')
+      const up = new Upstream({ config: cfg({ UPSTREAM_PROXY_FILE: file }), logger: silentLogger() })
+      await up.fetchJson(target.url)
+      assert.equal(proxy.tunnels.length, 1, '文件里没有可用代理时直连')
+
+      writeFileSync(file, `# 换成真代理\n${proxy.url}\n`)
+      // 5s 内不重复 stat，换文件后要等一下子才生效——这是与 Go 的 proxyFileReload 同一取舍
+      await new Promise((r) => setTimeout(r, 5_100))
+      await up.fetchJson(target.url)
+      assert.equal(proxy.tunnels.length, 2, '文件热加载：不重启进程就该切到新代理')
+    }
+    // 按源/接口门控（设置项 proxy_enabled_sources 的判定函数）
+    {
+      assert.equal(proxyEnabledFor('', { source: 'a', action: 'search' }), true)
+      assert.equal(proxyEnabledFor('a', { source: 'a', action: 'chapter' }), true)
+      assert.equal(proxyEnabledFor('a/chapter', { source: 'a', action: 'chapter' }), true)
+      assert.equal(proxyEnabledFor('a/chapter', { source: 'a', action: 'content' }), false)
+      assert.equal(proxyEnabledFor('b', { source: 'a', action: 'search' }), false)
+
+      const up = new Upstream({
+        config: cfg({ UPSTREAM_PROXIES: proxy.url }),
+        logger: silentLogger(),
+        proxyAllowedFor: (scope) => proxyEnabledFor('b', scope),
+      })
+      await up.fetchJson(target.url, { scope: { source: 'a', action: 'search' } })
+      assert.equal(proxy.tunnels.length, 2, '不在名单里的源不消耗代理')
+      await up.fetchJson(target.url, { scope: { source: 'b', action: 'search' } })
+      assert.equal(proxy.tunnels.length, 3, '在名单里的源走代理')
+    }
+  } finally {
+    proxy.server.close()
+    target.server.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('UA 轮换：UPSTREAM_UA_ROTATE 生效，且源显式给的 UA 优先', async () => {
+  const target = await startUpstreamTarget()
+  const cfg = (extra: Record<string, string> = {}) => loadConfig({ JWT_SECRET: 'x'.repeat(32), ...extra })
+  try {
+    {
+      const up = new Upstream({ config: cfg({ UPSTREAM_UA_ROTATE: 'true' }), logger: silentLogger() })
+      for (let i = 0; i < 12; i++) await up.fetchText(target.url)
+      const uas = target.hits.map((h) => h.ua)
+      assert.ok(uas.every((ua) => ua !== undefined && UA_ROTATE.includes(ua)), '轮换出来的 UA 必须来自声明的那一份池子')
+      assert.ok(new Set(uas).size > 1, '多请求之间要有轮换（否则等于没开）')
+    }
+    {
+      target.hits.length = 0
+      const up = new Upstream({ config: cfg({ UPSTREAM_UA_ROTATE: 'false' }), logger: silentLogger() })
+      await up.fetchText(target.url)
+      await up.fetchText(target.url, { headers: { 'User-Agent': 'reading/9.9' } })
+      assert.notEqual(target.hits[0]?.ua, undefined, '未开轮换时用 undici 默认 UA')
+      assert.notEqual(target.hits[0]?.ua, 'reading/9.9')
+      assert.equal(target.hits[1]?.ua, 'reading/9.9', '源显式给的 UA 不许被平台覆盖')
+    }
+  } finally {
+    target.server.close()
+  }
 })

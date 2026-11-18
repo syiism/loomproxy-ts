@@ -190,6 +190,46 @@ test('worker 隔离：插件跑在独立线程里，宿主按 invoke 调用并�
   }
 })
 
+test('worker 里的源也能读到自己的敏感设置（快照不许用面板视角的抹值列表）', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'loomproxy-worker-settings-'))
+  try {
+    const v = join(dir, 'worker_cfg', '1.0.0')
+    mkdirSync(v, { recursive: true })
+    writeFileSync(
+      join(v, 'manifest.json'),
+      JSON.stringify({
+        sdk_version: '^1',
+        isolation: 'worker',
+        entry: './index.mjs',
+        params: { search: ['key'] },
+        meta: {
+          code: 'worker_cfg',
+          display: 'W2',
+          category: 'fixture',
+          actions: ['search'],
+          settings: [{ key: 'w_secret', type: 'string', default: 'from-manifest', description: '密钥', sensitive: true }],
+        },
+      }),
+    )
+    writeFileSync(
+      join(v, 'index.mjs'),
+      `export default { handlers: { search: async (ctx) => ({ bookList: [], secret: ctx.settings.get('w_secret') }) } }`,
+    )
+    const { host, registry, settings } = makeHost(dir)
+    const infos = await host.scanSync()
+    assert.equal(infos.find((i) => i.code === 'worker_cfg')?.state, 'active')
+    assert.equal(settings.get('w_secret'), 'from-manifest', '主线程侧能读到真值')
+
+    const result = (await registry.get('worker_cfg')!.invoke!('search' as never, { key: 'x' } as never)) as {
+      secret?: string
+    }
+    assert.equal(result.secret, 'from-manifest', 'worker 侧拿到的快照也必须含敏感键真值')
+    await host.dispose()
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('worker 的取数走主线程桥：worker 里没有自己的 undici，缓存/熔断仍是一份', async () => {
   // 主线程起一个极小上游，worker 里的 handler 用 ctx.fetch.text 拉它
   const { createServer } = await import('node:http')

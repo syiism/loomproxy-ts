@@ -14,7 +14,10 @@ export interface SettingsStore {
   getBool(key: string, def: boolean): boolean
   getInt(key: string, def: number): number
   set(key: string, value: string): void
+  /** 面板视角：**敏感键的值被抹成空串**（只写不回显） */
   list(): SettingRow[]
+  /** 消费方视角：全部键值，含敏感键真值（worker 快照与本进程内的源都靠它读自己的密钥） */
+  rawValues?(): Record<string, string>
   /** 敏感键：读接口回空串，写侧留空 = 保持原值 */
   sensitiveKeys(): string[]
 }
@@ -71,8 +74,8 @@ export class InMemorySettings implements SettingsStore {
     for (const m of metas) this.register(m.settings ?? [])
   }
 
+  /** 消费方视角：敏感键也返回真值——「只写不回显」约束的是 list()/面板，不是自己的消费方 */
   get(key: string): string {
-    if (this.sensitive.has(key)) return ''
     return this.rows.get(key)?.value ?? ''
   }
 
@@ -105,6 +108,10 @@ export class InMemorySettings implements SettingsStore {
       value: this.sensitive.has(key) ? '' : v.value,
       type: v.type,
     }))
+  }
+
+  rawValues(): Record<string, string> {
+    return Object.fromEntries([...this.rows.entries()].map(([k, v]) => [k, v.value]))
   }
 
   sensitiveKeys(): string[] {

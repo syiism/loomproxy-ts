@@ -68,10 +68,12 @@ function sanitizeMessage(msg: string): string {
 const dedupeWindow = new Map<string, number>()
 
 export function createDispatcher(deps: DispatchDeps) {
-  const fetch = createFetchFacade(deps.upstream)
+
 
   return async function dispatch(req: FastifyRequest, reply: FastifyReply): Promise<void> {
     const { source, action } = req.params as { source: string; action: string }
+    // 每次请求一个带 scope 的取数门面：代理门控按源/接口判（proxy_enabled_sources）
+    const fetch = createFetchFacade(deps.upstream, { source, action })
     const resolved = deps.host.registryRef.resolve(source, action as ActionName)
     if (!resolved) {
       // 面板用 history 路由，深层链接（如 /admin/plugins）也是两段路径，与 /{source}/{action} 同形。

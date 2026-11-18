@@ -2,7 +2,7 @@
 // 顺序：读 env → 开库/迁移 → 播种（角色/默认套餐/管理员/设置）→ 插件扫描 → 路由 → 返回。
 import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
-import { TtlCache, Upstream, createLogger, loadConfig, type Config, type Logger } from '@loomproxy/kernel'
+import { TtlCache, Upstream, createLogger, loadConfig, proxyEnabledFor, type Config, type Logger } from '@loomproxy/kernel'
 import {
   DbKv,
   defaultPerSourceLimit,
@@ -165,7 +165,13 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
     maxEntries: config.upstreamCacheMaxSize,
     ttlMs: config.upstreamCacheTtlSec * 1000,
   })
-  const upstream = new Upstream({ config, logger: logger.child('upstream'), cache: upstreamCache })
+  const upstream = new Upstream({
+    config,
+    logger: logger.child('upstream'),
+    cache: upstreamCache,
+    // 代理门控按源/接口，名单存在设置项里（热读：管理员改完立刻生效，不烘进启动期）
+    proxyAllowedFor: (scope) => proxyEnabledFor(settings.get('proxy_enabled_sources'), scope),
+  })
   const registry = new SourceRegistry()
   // 池运行时：设备表由 store 实现（DeviceStore 端口声明在 contract），启停由装配层负责
   const pools = createPoolRuntime({

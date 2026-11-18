@@ -49,11 +49,21 @@ export class DbSettings implements SettingsStore {
     for (const m of metas) this.register(m.settings ?? [])
   }
 
+  /**
+   * 读设置值：**含敏感键的真值**。
+   * 「敏感键只写不回显」约束的是**面板/接口的回显**（`list()` 抹值），不是"自己的消费方也读不到"——
+   * 源声明的密钥（manifest settings 里 sensitive:true）如果这里也返回空串，那个源就永远拿不到自己的密钥，
+   * 面板上填了也等于没填（2026-11-18 实测）。
+   */
   get(key: string): string {
-    const row = this.db.get<{ value: string; sensitive: number }>('SELECT value, sensitive FROM system_settings WHERE key = ?', key)
-    if (!row) return ''
-    // 敏感键：读接口回空串（只写不回显）
-    return bool(row.sensitive) ? '' : row.value
+    return this.db.get<{ value: string }>('SELECT value FROM system_settings WHERE key = ?', key)?.value ?? ''
+  }
+
+  /** 全部键值（**含敏感键真值**）：worker 隔离的源在主线程拿不到 settings 对象，靠这份快照 */
+  rawValues(): Record<string, string> {
+    const out: Record<string, string> = {}
+    for (const r of this.db.all<{ key: string; value: string }>('SELECT key, value FROM system_settings')) out[r.key] = r.value
+    return out
   }
 
   getBool(key: string, def: boolean): boolean {

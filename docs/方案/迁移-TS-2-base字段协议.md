@@ -190,6 +190,18 @@ type ResponseFilter func(body []byte) bool   // 决定"这次响应能不能进�
 
 不许自建 http 客户端（否则绕开熔断/代理/共享连接池/UA 轮换）。
 
+代理与请求头的落地（2026-11-18 实测过）：
+
+- 池 = `UPSTREAM_PROXIES`（逗号分隔）+ `UPSTREAM_PROXY_FILE`（每行一个、`#` 注释、
+  按 mtime **5 秒热加载**，与 Go 的 `proxyFileReload` 同值）。两个来源每次现拼，换文件不必重启。
+- 走不走代理按「源/接口」门控：设置项 `proxy_enabled_sources`（`novel_a` 整源 /
+  `novel_a/chapter` 单接口，留空 = 不限制）。**scope 由派发层传**（`createFetchFacade(upstream, {source, action})`），
+  别让 Upstream 自己去拆 URL——那是第二份"谁在调"的事实。
+- 选择是**轮转**（Go 是随机）：分摊更均匀，单测也不抖。差别只影响"被同一个 IP 盯上"的概率，
+  换来可复现；真要按 Go 的随机改，只改 `nextProxy()` 一处。
+- UA 轮换池与 Go 的 `base/proxy.go:userAgents` **逐条一致，12 条，一处定义**
+  （`kernel/src/upstream.ts` 的 `UA_ROTATE`）。源显式给了 `User-Agent` 就不覆盖。
+
 链的顺序（`docs/架构/弹性获取栈与环境变量.md` 是正本）：缓存 → 合并（singleflight）→
 熔断（按 host）→ 代理池/直连 → 上游。上游缓存键：
 
@@ -336,7 +348,7 @@ book_ident, chapter_ident, media_type, result_count, content_withheld, **plugin_
 | 组 | 键 |
 |---|---|
 | 超时/缓存 | `TIMEOUT_CONNECT=5` `TIMEOUT_POOL=10` `CACHE_TTL=300` `CACHE_MAXSIZE=128` `UPSTREAM_CACHE_TTL=10` `UPSTREAM_CACHE_MAXSIZE=512` `UPSTREAM_CACHE_STALE_MULT=3` |
-| 熔断/代理 | `CIRCUIT_BREAKER_ENABLED=true` `CIRCUIT_BREAKER_FAILURES=5` `CIRCUIT_BREAKER_COOLDOWN=30` `UPSTREAM_PROXIES` `UPSTREAM_PROXY_FILE` `UPSTREAM_UA_ROTATE=false` `UPSTREAM_PROXY_API` `UPSTREAM_PROXY_API_SCHEME=http` `UPSTREAM_PROXY_API_INTERVAL=120` `UPSTREAM_PROXY_CHECK_URL=https://www.baidu.com` |
+| 熔断/代理 | `CIRCUIT_BREAKER_ENABLED=true` `CIRCUIT_BREAKER_FAILURES=5` `CIRCUIT_BREAKER_COOLDOWN=30` `UPSTREAM_PROXIES` `UPSTREAM_PROXY_FILE` `UPSTREAM_UA_ROTATE=false`。**未实现**（Go 有、TS 没有，别配也别写进示例）：`UPSTREAM_PROXY_API*` 动态代理、代理三连败封禁 60s、代理失败换一个再回退直连重试 |
 | 服务 | `SERVER_HOST=0.0.0.0` `SERVER_PORT=8081` `SERVER_LOG_LEVEL=info` `TZ_OFFSET_HOURS=8` `ERROR_CODE=-1` `DATA_DIR=data` `DATA_FILE_GLOB=*.json` |
 | 监控/计费 | `MONITOR_RETENTION_DAYS=0` `MONITOR_BACKFILL_SEC=900` `BILLING_DEDUPE_SEC=300` `RANK_CACHE_SEC=60` |
 | 鉴权 | `AUTH_ENABLED=false` `API_KEYS` `AUTH_WHITELIST=/,,/data,/auth/register,/auth/login,/panel` `JWT_SECRET` `JWT_EXPIRE_HOURS=168` `ADMIN_USERNAME` `ADMIN_PASSWORD` |
