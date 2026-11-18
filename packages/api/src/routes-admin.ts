@@ -419,8 +419,21 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
     if (!q) return unavailable(reply, '额度存储未接')
     const { id } = req.params as { id: string }
     const b = (req.body ?? {}) as { source_names?: string[]; sources?: string[]; limit?: number }
+    // 套餐与源名都要校验：**写进 quota_limits 的行就是授权**，一个 0 号套餐或拼错的源码
+    // 会在库里留下一条"谁都看不见、却让数据源删不掉"的垃圾行（现场 2026-11-18）
+    const planId = Number(id)
+    if (!Number.isInteger(planId) || !stores.plans?.list().some((p) => p.id === planId)) {
+      reply.code(404).send(fail(config.errorCode, '套餐不存在'))
+      return
+    }
     const names = b.source_names ?? b.sources ?? []
-    const existing = new Set(q.grantedSources(Number(id)).map((l) => l.target))
+    const known = new Set((deps.dataSources as unknown as { listAll?(): Array<{ name: string }> })?.listAll?.().map((d) => d.name) ?? [])
+    const unknown = names.filter((n) => !known.has(n))
+    if (unknown.length > 0) {
+      reply.code(400).send(fail(config.errorCode, `数据源不存在：${unknown.join(',')}`))
+      return
+    }
+    const existing = new Set(q.grantedSources(planId).map((l) => l.target))
     let created = 0
     let skipped = 0
     for (const n of names) {
@@ -429,7 +442,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
         skipped++
         continue
       }
-      q.grant(Number(id), 'source', n, b.limit ?? 0)
+      q.grant(planId, 'source', n, b.limit ?? 0)
       created++
     }
     return ok({ created, skipped })

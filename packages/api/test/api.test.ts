@@ -1237,6 +1237,13 @@ test('套餐授权：批量授权回 created/skipped、限额 -1 视为「已授
     assert.equal(first.statusCode, 200)
     assert.deepEqual((first.json() as { data: { created: number; skipped: number } }).data, { created: 1, skipped: 0 })
 
+    // 套餐/源码都要校验：0 号套餐与拼错的源码会在 quota_limits 留下"删不掉数据源"的垃圾行
+    const noPlan = await app.inject({ method: 'POST', url: '/admin/quotas/plans/0/sources', headers: H, payload: { sources: ['demo_one'], limit: -1 } })
+    assert.equal(noPlan.statusCode, 404)
+    const noSource = await app.inject({ method: 'POST', url: `/admin/quotas/plans/${planId}/sources`, headers: H, payload: { sources: ['nope_src'], limit: -1 } })
+    assert.equal(noSource.statusCode, 400)
+    assert.match((noSource.json() as { msg: string }).msg, /数据源不存在/)
+
     // 再授一次同源：跳过，不覆盖已有额度
     const again = await app.inject({ method: 'POST', url: `/admin/quotas/plans/${planId}/sources`, headers: H, payload: { sources: ['demo_one'], limit: 99 } })
     assert.deepEqual((again.json() as { data: { created: number; skipped: number } }).data, { created: 0, skipped: 1 })

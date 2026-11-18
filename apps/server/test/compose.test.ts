@@ -321,3 +321,45 @@ test('数据面鉴权闸：AUTH_ENABLED=true 必须带凭证（白名单除外�
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('运行期安装的新源：自动授权给内置套餐（匿名可用）+ 成本行按默认档（只有正文 1）', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'loomproxy-install-grant-'))
+  const base = {
+    PLUGIN_DIR: join(root, 'plugins'),
+    DATA_DIR: join(root, 'data'),
+    JWT_SECRET: 'x'.repeat(32),
+    ADMIN_PASSWORD: 'pw',
+  }
+  try {
+    const c = await compose({ env: base, logger: silentLogger() })
+    const login = await c.app.inject({ method: 'POST', url: '/auth/login', payload: { username: 'admin', password: 'pw' } })
+    const token = (login.json() as { data: { token: string } }).data.token
+    const manifest = JSON.stringify({
+      sdk_version: '^1', entry: './index.mjs', params: { search: ['query'], content: ['bookId', 'itemId'] },
+      meta: { code: 'fresh_src', display: '新源', category: 'demo', actions: ['search', 'content'] },
+    })
+    const res = await c.app.inject({
+      method: 'POST', url: '/admin/sources/install',
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        code: 'fresh_src', version: '1.0.0',
+        files: {
+          'manifest.json': manifest,
+          'index.mjs': `export default { handlers: { search: async () => ({ bookList: [] }), content: async () => ({ contentType: 'novel', data: { content: 'x' } }) } }`,
+        },
+      },
+    })
+    assert.equal(res.statusCode, 200)
+
+    // 匿名（免费档）能直接调：授权行由 onPluginActive 补上，不用重启也不用等下次启动扫描
+    const anon = await c.app.inject({ method: 'GET', url: '/fresh_src/search?query=x' })
+    assert.equal(anon.statusCode, 200)
+
+    // 成本行 = 默认档：检索免费、正文 1
+    assert.equal(c.quota.costOf('fresh_src', 'search')?.cost, 0)
+    assert.equal(c.quota.costOf('fresh_src', 'content')?.cost, 1)
+    await c.app.close()
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

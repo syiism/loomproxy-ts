@@ -100,6 +100,13 @@ Node 24 直接跑 `.ts`（type stripping），所以**用例不需要构建**；
 | `FQ_SESSION_POOL` | `DATA_DIR/_runtime/fq_novel/fq-sessions.json` | 设备会话池。首次运行从协议树拷一份种子（5 台已注册设备）；**刻意不放 `DATA_DIR/fq_novel/`**，否则 `/data` 会把它当成静态字典列出来 |
 | `FQ_POOL_MAX` | `5` | 协议层自己的会话池上限 |
 
+`packages/plugins/shuqi`（书旗小说）是**转写**而不是复用：它的协议（App 加密口的签名/keystream/正文解码）
+在 `src/protocol.ts` 里自带实现，来源是 Legado 书源「书旗-轻页(阅读)」的 jsLib
+（`/home/muyang/work/legado-suite/legado-work/work/书旗-轻页/src/jslib.js`）。
+转写口径：**算法与常量逐字节对齐**（`test/protocol.test.ts` 用参考实现跑出的黄金值钉住），
+但宿主桥（Legado 的 `java.*`）换成了 Node 的 Buffer/crypto 与平台唯一的取数出口 `ctx.fetch`；
+设备画像是按固定种子派生的稳定值（游客态，服务端不校验）。凭据/密文常量不进文档，只在代码里。
+
 ## JWT 互认（与 Go 版同一个 `JWT_SECRET` 时）
 
 - **claims 同形**：`{uid, username, jti, iat, iss:"loomproxy", sub:"user", exp?}` —— 与本仓早期形状

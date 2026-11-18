@@ -115,6 +115,15 @@ importers:
         specifier: workspace:*
         version: link:../../source-kit
 
+  packages/plugins/shuqi:
+    dependencies:
+      '@loomproxy/contract':
+        specifier: workspace:*
+        version: link:../../contract
+      '@loomproxy/source-kit':
+        specifier: workspace:*
+        version: link:../../source-kit
+
   packages/pool:
     dependencies:
       '@loomproxy/contract':

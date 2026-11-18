@@ -187,28 +187,32 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
     settings,
     dataSources,
     upstream,
-    // 插件生效即登记接口成本行（缺行 = 不计费）：**启动扫描与运行期安装都走这一条**，
-    // 否则"后装的源免费"只会在账单上看出来。默认档：只有正文计 1，其余动作 0（可面板改）
-    onPluginActive: (meta) => quota.ensureDefaultCosts(meta.code, meta.actions),
+    // 插件生效即落两件事：① 接口成本行（缺行 = 不计费，默认只有正文计 1）；
+    // ② 首次见到的源补内置套餐授权。启动扫描与运行期安装走同一条——
+    // 否则"后装的源免费/匿名用不了"只会在账单和 401 上表现出来
+    onPluginActive: (meta) => {
+      quota.ensureDefaultCosts(meta.code, meta.actions)
+      grantNewSource(meta.code)
+    },
   })
   // 「新接入一个源」要给它补上各内置套餐的授权行：限额即授权，缺这一行老用户会突然
-  // "没有任何可用数据源"。**只对 scan 前不存在的源码补**——已存在的源（哪怕管理员把授权
+  // "没有任何可用数据源"。**只对进程内第一次见到的源码补**——已存在的源（哪怕管理员把授权
   // 删了）不碰，否则就是"删了又自己回来"那个说不清的格子。
+  //
+  // 判据放在这个闭包里而不是"启动期扫描循环"里：**运行期安装的插件也走同一条**
+  // （onPluginActive 在 reload/安装时都会触发），否则「面板装上 → 匿名却用不了」会非常费解。
   const knownSources = new Set(dataSources.listAll().map((r) => r.name))
   const builtinPlans = plans.list().filter((p) => ['free', 'vip', 'admin'].includes(p.code))
-  // 成本行由 host 的 onPluginActive 钩子登记（见上）：启动扫描与运行期安装走同一条路径
-  const infos = await host.scanSync()
-  for (const info of infos) {
-    if (info.state !== 'active') continue
-    const entry = registry.get(info.code)
-    if (!entry) continue
-    if (!knownSources.has(info.code)) {
-      for (const plan of builtinPlans) {
-        if (!quota.hasGrant(plan.id, info.code)) quota.grant(plan.id, 'source', info.code, defaultPerSourceLimit(plan.code))
-      }
-      logger.info(`新源 ${info.code} 已授权给内置套餐：${builtinPlans.map((p) => p.code).join(',') || '（无）'}`)
+  const grantNewSource = (code: string): void => {
+    if (knownSources.has(code)) return
+    knownSources.add(code)
+    for (const plan of builtinPlans) {
+      if (!quota.hasGrant(plan.id, code)) quota.grant(plan.id, 'source', code, defaultPerSourceLimit(plan.code))
     }
+    logger.info(`新源 ${code} 已授权给内置套餐：${builtinPlans.map((p) => p.code).join(',') || '（无）'}`)
   }
+  // 成本行与授权行都由 host 的 onPluginActive 钩子落（见上）：启动扫描与运行期安装同一条路径
+  const infos = await host.scanSync()
   logger.info(`插件扫描完成：${infos.length} 个（active=${infos.filter((i) => i.state === 'active').length}）`)
 
   // 插件加载完再启动池（源的池声明在加载时登记，启动要等所有人就位）
