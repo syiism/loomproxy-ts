@@ -216,6 +216,39 @@ export function registerControlRoutes(app: FastifyInstance, deps: ControlDeps): 
     }
   })
 
+  /**
+   * 安装插件包（zip）：面板选文件 → base64 → 这里解包 → 与 install 同一条写盘/换代路径。
+   * 收 zip 而不是收文件内容：真实插件包不止两个文件（`data/*.json` 数据字典、
+   * 多模块入口），逐个贴文本框不现实；解压面在 source-host 的 zip.ts（stored/deflate 两种，
+   * 路径合法性仍由 host 的 safeRelPath 一处判）。
+   */
+  app.post('/admin/sources/install-package', { bodyLimit: 16 * 1024 * 1024 }, async (req, reply) => {
+    if (!(await adminOnly(req, reply, config, deps.stores))) return
+    const b = (req.body ?? {}) as { package?: string; version?: string }
+    if (!b.package || typeof b.package !== 'string') {
+      reply.code(400).send(fail(config.errorCode, '缺少 package（zip 的 base64）'))
+      return
+    }
+    if (!/^[A-Za-z0-9+/=\s]+$/.test(b.package)) {
+      reply.code(400).send(fail(config.errorCode, 'package 不是合法的 base64'))
+      return
+    }
+    const bytes = Buffer.from(b.package, 'base64')
+    if (bytes.length === 0) {
+      reply.code(400).send(fail(config.errorCode, 'package 解出来是空的'))
+      return
+    }
+    try {
+      const info = await deps.host.installPackage({
+        bytes: new Uint8Array(bytes),
+        ...(b.version ? { version: b.version } : {}),
+      })
+      return ok(info)
+    } catch (e) {
+      reply.code(400).send(fail(config.errorCode, e instanceof Error ? e.message : String(e)))
+    }
+  })
+
   for (const op of ['reload', 'rollback'] as const) {
     app.post(`/admin/sources/:code/${op}`, async (req, reply) => {
       if (!(await adminOnly(req, reply, config, deps.stores))) return

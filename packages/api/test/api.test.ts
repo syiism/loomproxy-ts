@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
+import { deflateRawSync } from 'node:zlib'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadConfig, silentLogger, Upstream } from '@loomproxy/kernel'
@@ -676,6 +677,154 @@ test('添加插件：安装 → 写盘 → 立即生效（数据面可调）；�
     assert.equal(broken.statusCode, 400)
     assert.equal(host.info().find((i) => i.code === 'demo_broken' && i.state === 'active'), undefined)
     assert.equal((await app.inject({ method: 'GET', url: '/demo_broken/search?key=x' })).statusCode, 404)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+// 用例里造 zip（生产路径只读不写，所以写 zip 的代码只出现在测试里）
+function makeZip(entries: Array<{ name: string; content: string; deflate?: boolean }>): Uint8Array {
+  const locals: Buffer[] = []
+  const centrals: Buffer[] = []
+  let offset = 0
+  for (const e of entries) {
+    const raw = Buffer.from(e.content, 'utf8')
+    const body = e.deflate ? deflateRawSync(raw) : raw
+    const crc = crc32(raw)
+    const nameBuf = Buffer.from(e.name, 'utf8')
+    const local = Buffer.alloc(30)
+    local.writeUInt32LE(0x04034b50, 0)
+    local.writeUInt16LE(20, 4) // version needed
+    local.writeUInt16LE(0x800, 6) // utf8 名
+    local.writeUInt16LE(e.deflate ? 8 : 0, 8)
+    local.writeUInt32LE(crc, 14)
+    local.writeUInt32LE(body.length, 18)
+    local.writeUInt32LE(raw.length, 22)
+    local.writeUInt16LE(nameBuf.length, 26)
+    locals.push(local, nameBuf, body)
+
+    const central = Buffer.alloc(46)
+    central.writeUInt32LE(0x02014b50, 0)
+    central.writeUInt16LE(20, 4)
+    central.writeUInt16LE(20, 6)
+    central.writeUInt16LE(0x800, 8)
+    central.writeUInt16LE(e.deflate ? 8 : 0, 10)
+    central.writeUInt32LE(crc, 16)
+    central.writeUInt32LE(body.length, 20)
+    central.writeUInt32LE(raw.length, 24)
+    central.writeUInt16LE(nameBuf.length, 28)
+    central.writeUInt32LE(offset, 42)
+    centrals.push(central, nameBuf)
+    offset += local.length + nameBuf.length + body.length
+  }
+  const cdOffset = offset
+  const cdSize = centrals.reduce((n, b) => n + b.length, 0)
+  const eocd = Buffer.alloc(22)
+  eocd.writeUInt32LE(0x06054b50, 0)
+  eocd.writeUInt16LE(entries.length, 8)
+  eocd.writeUInt16LE(entries.length, 10)
+  eocd.writeUInt32LE(cdSize, 12)
+  eocd.writeUInt32LE(cdOffset, 16)
+  return new Uint8Array(Buffer.concat([...locals, ...centrals, eocd]))
+}
+
+let crcTable: number[] | null = null
+function crc32(buf: Buffer): number {
+  if (!crcTable) {
+    crcTable = []
+    for (let n = 0; n < 256; n++) {
+      let c = n
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
+      crcTable[n] = c >>> 0
+    }
+  }
+  let crc = 0xffffffff
+  for (const b of buf) crc = (crcTable![(crc ^ b) & 0xff] as number) ^ (crc >>> 8)
+  return (crc ^ 0xffffffff) >>> 0
+}
+
+test('上传插件包（zip）：包根或 <源码>/<版本>/ 前缀都能装；路径穿越/多根/缺 manifest 都 400', async () => {
+  const { app, root, host } = await makeApp()
+  try {
+    const H = { authorization: `Bearer ${adminToken()}` }
+    const manifest = (code: string) =>
+      JSON.stringify({
+        sdk_version: '^1',
+        entry: './index.mjs',
+        params: { search: ['key'] },
+        meta: { code, display: '打包来的源', category: 'demo', actions: ['search'], sort_order: 50 },
+      })
+    const entry = `export default { handlers: { search: async () => ({ bookList: [] }) } }`
+    const asBody = (zip: Uint8Array, version?: string) => ({
+      package: Buffer.from(zip).toString('base64'),
+      ...(version ? { version } : {}),
+    })
+
+    // ① 带 <源码>/<版本>/ 前缀 + deflate 压缩（zip -r 打包目录的常见形状）
+    const zipped = makeZip([
+      { name: 'zip_one/0.2.0/manifest.json', content: manifest('zip_one'), deflate: true },
+      { name: 'zip_one/0.2.0/index.mjs', content: entry, deflate: true },
+      { name: 'zip_one/0.2.0/data/cats.json', content: '{"a":1}' },
+    ])
+    const res = await app.inject({ method: 'POST', url: '/admin/sources/install-package', headers: H, payload: asBody(zipped) })
+    assert.equal(res.statusCode, 200)
+    const info = (res.json() as { data: { code: string; version: string; state: string } }).data
+    assert.equal(info.code, 'zip_one')
+    assert.equal(info.version, '0.2.0', '版本号从包内目录名自动取')
+    assert.equal(info.state, 'active')
+    // 多文件也要落盘（data/cats.json 是源的数据字典）
+    assert.ok(existsSync(join(root, 'plugins', 'zip_one', '0.2.0', 'data', 'cats.json')))
+
+    // ② 扁平包（manifest 在根）：版本由请求给
+    const flat = makeZip([
+      { name: 'manifest.json', content: manifest('zip_flat') },
+      { name: 'index.mjs', content: entry },
+    ])
+    const flatRes = await app.inject({ method: 'POST', url: '/admin/sources/install-package', headers: H, payload: asBody(flat, '1.0.0') })
+    assert.equal(flatRes.statusCode, 200)
+    assert.equal((flatRes.json() as { data: { version: string } }).data.version, '1.0.0')
+    // 版本既没给、包里也没有 → 明说，不猜一个
+    const noVersion = await app.inject({ method: 'POST', url: '/admin/sources/install-package', headers: H, payload: asBody(flat) })
+    assert.equal(noVersion.statusCode, 400)
+    assert.match((noVersion.json() as { msg: string }).msg, /版本/)
+
+    // ③ 路径穿越（zip-slip）：包里的文件名带 .. → 拒绝，且没往上级目录写东西
+    const slip = makeZip([
+      { name: 'manifest.json', content: manifest('zip_slip') },
+      { name: 'index.mjs', content: entry },
+      { name: '../escaped.txt', content: 'boom' },
+    ])
+    const slipRes = await app.inject({ method: 'POST', url: '/admin/sources/install-package', headers: H, payload: asBody(slip, '1.0.0') })
+    assert.equal(slipRes.statusCode, 400)
+    assert.match((slipRes.json() as { msg: string }).msg, /路径/)
+    assert.equal(existsSync(join(root, 'plugins', 'escaped.txt')), false)
+    assert.equal(existsSync(join(root, 'escaped.txt')), false)
+
+    // ④ 多份 manifest（包里塞了两个源）与缺 manifest
+    const two = makeZip([
+      { name: 'a/1.0.0/manifest.json', content: manifest('zip_a') },
+      { name: 'a/1.0.0/index.mjs', content: entry },
+      { name: 'b/1.0.0/manifest.json', content: manifest('zip_b') },
+      { name: 'b/1.0.0/index.mjs', content: entry },
+    ])
+    const twoRes = await app.inject({ method: 'POST', url: '/admin/sources/install-package', headers: H, payload: asBody(two) })
+    assert.equal(twoRes.statusCode, 400)
+    const empty = makeZip([{ name: 'index.mjs', content: entry }])
+    const emptyRes = await app.inject({ method: 'POST', url: '/admin/sources/install-package', headers: H, payload: asBody(empty, '1.0.0') })
+    assert.equal(emptyRes.statusCode, 400)
+    assert.match((emptyRes.json() as { msg: string }).msg, /manifest/)
+
+    // ③' 非法 base64 / 空包：不落到解包逻辑里
+    assert.equal((await app.inject({ method: 'POST', url: '/admin/sources/install-package', headers: H, payload: { package: '不是 base64 !!' } })).statusCode, 400)
+    assert.equal((await app.inject({ method: 'POST', url: '/admin/sources/install-package', headers: H, payload: {} })).statusCode, 400)
+
+    // 装出来的源照常可派发
+    assert.equal(
+      (await app.inject({ method: 'GET', url: '/zip_one/search?key=x', headers: H })).statusCode,
+      200,
+    )
+    assert.ok(host.info().some((i) => i.code === 'zip_one' && i.state === 'active'))
   } finally {
     await app.close()
     rmSync(root, { recursive: true, force: true })

@@ -21,6 +21,20 @@
          所以只有管理员能进来；同名版本已存在会被拒（不覆盖正在跑的产物）。 -->
     <section v-if="installOpen" class="card reveal mb-6">
       <h2 class="font-serif text-lg font-medium tracking-tight mb-4">添加插件</h2>
+      <!-- 上传插件包（zip）：包里可以是包根，也可以是 <源码>/<版本>/ 一层（zip -r 打包目录的产物） -->
+      <div class="flex flex-wrap items-end gap-3 mb-4 pb-4 border-b border-border">
+        <label class="flex flex-col gap-1 text-xs text-text-muted">插件包（.zip）
+          <input type="file" accept=".zip,application/zip" class="input text-xs" @change="onZip" />
+        </label>
+        <label class="flex flex-col gap-1 text-xs text-text-muted">版本（可留空：包里有 <源码>/<版本>/ 目录时自动取）
+          <input v-model="zipVersion" class="input font-mono w-32" placeholder="0.1.0" maxlength="32">
+        </label>
+        <button class="btn-primary btn-sm" :disabled="installing || !zipFile" @click="installZip">
+          {{ installing ? '安装中…' : '上传并安装' }}
+        </button>
+        <span v-if="zipFile" class="text-xs text-text-muted">{{ zipFile.name }} · {{ Math.round(zipFile.size / 1024) }} KB</span>
+      </div>
+
       <div class="flex flex-wrap items-end gap-3 mb-3">
         <label class="flex flex-col gap-1 text-xs text-text-muted">源码
           <input v-model="form.code" class="input font-mono w-40" placeholder="my_novel" maxlength="64">
@@ -99,6 +113,8 @@ import { toast, revealObserve } from '../../utils.js'
 const plugins = ref([])
 const installOpen = ref(false)
 const installing = ref(false)
+const zipFile = ref(null)
+const zipVersion = ref('')
 const form = ref({ code: '', version: '0.1.0', entryName: 'index.mjs', manifest: '', entry: '' })
 const versions = ref({})
 const loading = ref(false)
@@ -152,6 +168,32 @@ const reloadAll = async () => {
     toast(e.message, 'error')
   } finally {
     busy.value = ''
+  }
+}
+
+const onZip = (e) => {
+  zipFile.value = e.target.files?.[0] ?? null
+}
+
+const installZip = async () => {
+  if (!zipFile.value) return
+  installing.value = true
+  try {
+    const buf = new Uint8Array(await zipFile.value.arrayBuffer())
+    // FileReader 的 dataURL 里带前缀；这里直接转 base64（≤16MB 的包用一次循环足够）
+    let bin = ''
+    for (let i = 0; i < buf.length; i++) bin += String.fromCharCode(buf[i])
+    const r = await adminApi.installPluginPackage({ packageBase64: btoa(bin), version: zipVersion.value.trim() || undefined })
+    notice.value = `已安装 ${r.code}@${r.version}（世代 ${r.generation}）`
+    toast('已安装并生效', 'success')
+    installOpen.value = false
+    zipFile.value = null
+    zipVersion.value = ''
+    await load()
+  } catch (e) {
+    toast(e.message, 'error')
+  } finally {
+    installing.value = false
   }
 }
 

@@ -16,6 +16,7 @@ import {
 import type { DataSourceStore, SettingsStore } from '@loomproxy/store'
 import { compareVersion, describeVersion, listVersions, sdkCompatible } from './manifest.ts'
 import { WorkerPluginHost } from './worker-host.ts'
+import { readZip } from './zip.ts'
 
 export type PoolSink = {
   register(name: string, entry: { provider: import('@loomproxy/contract').PoolProvider; config?: Partial<import('@loomproxy/contract').PoolConfig> }): unknown
@@ -204,14 +205,60 @@ export class SourceHost {
     const entryRel = safeRelPath(String(manifest.entry ?? './index.mjs'))
     if (input.files[entryRel] === undefined) throw new Error(`入口文件 ${entryRel} 不在提交的内容里`)
 
-    const codeDir = join(this.deps.pluginDir, input.code)
-    const target = join(codeDir, input.version)
-    if (existsSync(target)) throw new Error(`版本 ${input.code}@${input.version} 已存在（换一个版本号，或先卸载）`)
+    return this.writeAndActivate(input.code, input.version, input.files)
+  }
+
+  /**
+   * 安装一个**插件包**（zip）：`manifest.json` 可以在包根，也可以带 `<code>/<version>/` 前缀
+   * （`zip -r` 打包 plugin 目录的产物就是这个形状，不用运维手工拆一层路径）。
+   * 版本号优先取请求给的，其次取前缀目录名，都没有就报错让调用方明说。
+   */
+  async installPackage(input: { bytes: Uint8Array; version?: string }): Promise<PluginInfo> {
+    const entries = readZip(input.bytes)
+    // 找 manifest.json：必须恰好一份（多份说明包里塞了两个源）
+    const manifests = [...entries.keys()].filter((n) => n === 'manifest.json' || n.endsWith('/manifest.json'))
+    if (manifests.length === 0) throw new Error('包里没有 manifest.json')
+    if (manifests.length > 1) throw new Error(`包里有多份 manifest.json（${manifests.join(', ')}），一次只装一个源`)
+    const manifestPath = manifests[0] as string
+    const root = manifestPath.slice(0, -'manifest.json'.length).replace(/\/$/, '')
+
+    // 只收 root 之下的文件；包根上散落的其他东西（README/截图）忽略但不允许出现第二个根
+    const files: Record<string, string> = {}
+    for (const [name, content] of entries) {
+      if (root !== '' && !name.startsWith(`${root}/`)) continue
+      const rel = safeRelPath(root === '' ? name : name.slice(root.length + 1))
+      files[rel] = new TextDecoder().decode(content)
+    }
+    const manifestRaw = files['manifest.json']
+    if (manifestRaw === undefined) throw new Error('包里没有 manifest.json')
+    let manifest: PluginManifest
+    try {
+      manifest = JSON.parse(manifestRaw) as PluginManifest
+    } catch (e) {
+      throw new Error(`manifest.json 不是合法 JSON：${errText(e)}`)
+    }
+    const code = String(manifest.meta?.code ?? '')
+    if (!CODE_RE.test(code)) {
+      throw new Error(`manifest.meta.code 缺失或非法（只允许小写字母/数字/下划线）：${code}`)
+    }
+    // 前缀 `<code>/<version>` 时顺手把版本号带出来（少于两段就只可能是 <code>）
+    const segs = root.split('/').filter(Boolean)
+    const fromPath = segs.length >= 2 ? (segs[segs.length - 1] as string) : ''
+    const version = input.version ?? (VERSION_RE.test(fromPath) ? fromPath : '')
+    if (!version) throw new Error('包里没有带版本号目录，请在请求里给 version')
+    return this.install({ code, version, files })
+  }
+
+  /** 写盘（暂存 + 原子 rename）然后换代；失败时按"有没有老代"决定留不留新目录 */
+  private async writeAndActivate(code: string, version: string, files: Record<string, string>): Promise<PluginInfo> {
+    const codeDir = join(this.deps.pluginDir, code)
+    const target = join(codeDir, version)
+    if (existsSync(target)) throw new Error(`版本 ${code}@${version} 已存在（换一个版本号，或先卸载）`)
 
     mkdirSync(this.deps.pluginDir, { recursive: true })
     const staging = join(this.deps.pluginDir, `.staging-${randomBytes(6).toString('hex')}`)
     try {
-      for (const [rawPath, content] of files) {
+      for (const [rawPath, content] of Object.entries(files)) {
         const rel = safeRelPath(rawPath)
         const abs = join(staging, rel)
         mkdirSync(dirname(abs), { recursive: true })
@@ -226,13 +273,13 @@ export class SourceHost {
 
     // 换代失败：老代还在跑就保留新目录（供排查/回滚），没有老代就清掉——
     // 否则下一次扫描会把一个带病的版本当成"当前版本"，每次启动都报同一条错
-    const hadGeneration = this.loaded.has(input.code)
+    const hadGeneration = this.loaded.has(code)
     try {
-      return await this.reload(input.code)
+      return await this.reload(code)
     } catch (e) {
       if (!hadGeneration) {
         rmSync(target, { recursive: true, force: true })
-        this.versions.delete(input.code)
+        this.versions.delete(code)
       }
       throw e
     }

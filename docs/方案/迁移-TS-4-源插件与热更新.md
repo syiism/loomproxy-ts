@@ -145,6 +145,7 @@ Go 版把声明位拆在三处（`init()` 注册 → `db.Init` 落行 → `OnBoo
 | 新增 `GET /admin/sources/plugins`（code/version/state/isolation/generation/inflight/dir/last_error） | ✅ 已落地 | `packages/api/src/routes.ts`；面板「源插件」页 |
 | 新增 `POST /admin/sources/:code/{reload,rollback,disable,unload}` + `POST /admin/sources/reload-all` | ✅ 已落地 | 同上；面板逐行按钮 + 页头「全部 reload」 |
 | 新增 `POST /admin/sources/install`（**添加插件**：提交 manifest 与入口文件内容 → 写盘 → 立即换代） | ✅ 已落地（2026-11-18） | `source-host/src/host.ts` 的 `install()`、`api/src/routes-control.ts`；面板「源插件 → 添加插件」 |
+| 新增 `POST /admin/sources/install-package`（**上传插件包**：zip → 解包 → 同一条写盘/换代路径；包根或 `<code>/<version>/` 前缀都认） | ✅ 已落地（2026-11-18） | `source-host/src/{zip.ts,host.ts}` 的 `readZip()` / `installPackage()`；面板「源插件 → 插件包（.zip）」 |
 | 明细加 `plugin_version` 列（可按版本筛） | ✅ 已落地（TS 分支） | `contract/src/calls.ts` 的 `CallLogRow`、`store/src/call-logs.ts`、`api/src/calls.ts` 出口记账、`GET /admin/monitor/history?plugin_version=`、面板「调用明细」页 |
 
 第三条仍是**跨契约改动**，落地的三处必须同批：① 数据结构（`CallLogRow`）② 写入口（请求出口 hook，不写在 handler 里，
@@ -191,7 +192,20 @@ worker（插件）            ┌─ source-kit 提供的 ctx.fetch(...) ─→ 
 4. 换代失败且该 code 没有老代 → 删掉刚写入的目录（不留"每次启动都报同一条错"的带病版本）；
    有老代则保留目录供排查，老代继续跑。
 
-**仍然不做**：从 URL 下载、签名校验、沙箱。这两条要么一起做，要么都不做——
+**为什么收 zip 而不再加一条"从 npm / GitHub / Gitee 装"**：
+
+- zip 是**一次传输**：管理员把包交给服务端，代码来源与本次请求同源，审计只需看一次请求。
+  npm/git 装是**服务端主动外呼拉代码**——请求里只有一个包名/URL，真正执行的代码
+  从远端来、可被远端改（tag 可移动、registry 可投毒），安装时刻与代码内容都不在本次请求里。
+- 若要开那一档，先决条件是**签名校验 + 沙箱**（`§9` 已写死），且必须同批上线：
+  签名给出"这份代码是谁签的"，沙箱给出"它做不了什么"。缺任一的"git 安装"等于把
+  RCE 变成一个 POST 包名。
+- npm 还多一层：生产镜像要装包管理器、要处理 registry 凭据与网络白名单，而插件产物本来就
+  是**纯 JS + 数据文件**（`tools/pack-plugin.mjs` 的输出形态），不需要依赖解析。
+- zip 解包面自己写（`zip.ts`）：只认 stored/deflate，不做 ZIP64/加密，条目数/单文件/解压总量
+  三重上限（压缩炸弹），解出来的名字**只交给 `safeRelPath` 判**（路径合法性只有一处）。
+
+**仍然不做**：从 URL 下载、签名校验、沙箱。这三条要么一起做，要么都不做——
 半个签名校验比没有更糟（会让人以为验过）。
 
 ## 10. 失败与回退矩阵

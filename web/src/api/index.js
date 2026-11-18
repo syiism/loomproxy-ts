@@ -138,6 +138,10 @@ export const adminApi = {
   // 为什么不传 zip：解压要新依赖、还要自己防 zip-slip；路径校验只有服务端一处（host.install）。
   installPlugin: ({ code, version, files }) =>
     request('/admin/sources/install', { method: 'POST', body: { code, version, files } }),
+  // 安装插件包（zip，base64）：真实插件包不止两个文件（data/*.json、多模块入口），
+  // 解包在服务端（source-host/zip.ts），面板只负责把文件读成 base64。
+  installPluginPackage: ({ packageBase64, version }) =>
+    request('/admin/sources/install-package', { method: 'POST', body: { package: packageBase64, version } }),
   // 卡密（套餐兑换）
   createRedeemCodes: (payload) => request('/admin/redeem-codes', { method: 'POST', body: payload }),
   listRedeemCodes: ({ page = 1, pageSize = 20, batchNo, status, planId } = {}) =>
