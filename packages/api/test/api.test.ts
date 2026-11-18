@@ -339,6 +339,10 @@ test('明细：每次派发落一行并带 plugin_version，历史页可按版�
     assert.equal(row['action'], 'content')
     assert.equal(row['chapter_ident'], '')
     assert.ok(typeof row['latency_ms'] === 'number')
+    // 源声明了 media_type 且响应里没有 bookTypeCode → 明细这一格必须是声明的媒介，
+    // 不许留空（面板的媒介筛选、覆盖率、内容榜都读它，空=“未判定”）
+    const searchRow = page.list.find((r) => r['action'] === 'search')!
+    assert.equal(searchRow['media_type'], 'novel')
 
     const none = await app.inject({
       method: 'GET',

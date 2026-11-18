@@ -228,7 +228,12 @@ export function createDispatcher(deps: DispatchDeps) {
       }
 
       // 出口三处改写，顺序固定：观测 → 打标 → 带内脱敏
-      observeCall(source, params, result, subject)
+      // 观测要把源声明一起带上：单媒介源（如 fq_novel 声明 media_type=novel）的搜索响应里
+      // 没有 bookTypeCode，不把声明当兜底就永远落成"未判定"（面板筛选/覆盖率全跟着错）。
+      observeCall(source, params, result, subject, {
+        ...(entry.meta.media_type ? { media: entry.meta.media_type } : {}),
+        ...(entry.meta.search_tabs ? { searchTabs: entry.meta.search_tabs } : {}),
+      })
       // 名称进缓存：bookId/itemId 是标识，书名/章节名靠这里攒起来（回填与明细展示都读它）
       if (subject.book_name) deps.nameCache?.remember('book', source, params['bookId'] ?? '', subject.book_name)
       if (subject.chapter_title) deps.nameCache?.remember('chapter', source, params['itemId'] ?? '', subject.chapter_title)

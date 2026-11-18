@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { SourceRegistry } from '../src/registry.ts'
 import { defineSource } from '../src/handler.ts'
 import { stampSearchSource } from '../src/present.ts'
-import { observeCall } from '../src/observe.ts'
+import { observeCall, type ObserveDecl } from '../src/observe.ts'
 import { newSubject, withholdContent } from '@loomproxy/contract'
 
 const meta = {
@@ -87,4 +87,38 @@ test('观测抽取：四路各抽自己那一格；带内错误只标观测、�
   const withheld = withholdContent(err)
   assert.equal(withheld.content_withheld, true)
   assert.equal(withheld.in_band_reason, 'upstream_network')
+})
+
+test('媒介判定链：响应自带 → 请求 tab 声明 → 源默认声明 → 空（未判定）', () => {
+  const decl: ObserveDecl = {
+    media: 'novel',
+    searchTabs: [
+      { tab_type: 3, media_type: 'novel' },
+      { tab_type: 4, media_type: 'comic' },
+    ],
+  }
+
+  // ① 响应自带优先（单条目的类型字段大过源默认声明）
+  const own = observeCall('demo', { key: 'x' }, { bookList: [{ bookTypeCode: 2 }] }, newSubject(), decl)
+  assert.equal(own.media, 'audio')
+
+  // ② 响应没给 → 请求 tab 命中的声明（多媒介源：同一源不同 tab 不同形态）
+  const tab = observeCall('demo', { key: 'x', tabType: '4' }, { bookList: [{}] }, newSubject(), decl)
+  assert.equal(tab.media, 'comic')
+
+  // ③ tab 没命中（或请求没带 tab）→ 源默认声明；这才是单媒介源的真实现场
+  const def = observeCall('demo', { key: 'x' }, { bookList: [{}] }, newSubject(), decl)
+  assert.equal(def.media, 'novel')
+  const list = observeCall('demo', { key: 'x', tabType: '9' }, { bookList: [{}] }, newSubject(), decl)
+  assert.equal(list.media, 'novel', 'tab 参数命中不到任何声明时回落到默认')
+
+  // ④ 什么都没声明 → 空串（未判定是合法状态，不许编一个类型出来）
+  const none = observeCall('demo', { key: 'x' }, { bookList: [{}] }, newSubject())
+  assert.equal(none.media, '')
+
+  // 目录与正文同样吃声明兜底（正文 contentType 自己给了就以它为准）
+  const chapter = observeCall('demo', {}, { chapterList: [{}] }, newSubject(), decl)
+  assert.equal(chapter.media, 'novel')
+  const body = observeCall('demo', {}, { contentType: 'audio', data: { content: 'x' } }, newSubject(), decl)
+  assert.equal(body.media, 'audio')
 })

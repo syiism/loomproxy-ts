@@ -255,6 +255,14 @@ Kind   = "" | "burn_wall_clock" | "spread"
 抽取规则（`legado.ObserveCall`）：`bookList`→搜词+书名灌缓存；`bookInfo`→书名/媒介；
 `chapterList`→条数；正文→`contentType` 判媒介、`content` 非空记 1。**空串 = 没抽到，不是错误。**
 
+媒介这一格不是“能抽到就抽到”的尽力而为，而是一条**判定链**（优先级从高到低）：
+① 响应自带（条目的 `bookTypeCode` / 详情的 `bookType` / 正文的 `contentType`）
+→ ② 请求 tab 命中的源声明（`SearchTab.media_type`）
+→ ③ 命名缓存里这本书此前的判定（本仓 `name_cache` 不存媒介，暂缺）
+→ ④ 源默认声明（`SourceMeta.media_type`）→ ⑤ 空串（未判定）。
+缺了 ②④ 不会报错但会骗人：单媒介源（声明了 `media_type`）的搜索响应里没有条目类型字段，
+明细/筛选/覆盖率/内容榜就会整天显示“未判定”。用例在 `packages/source-kit/test`。
+
 额度侧落库（本分支新增，Go 版同名表）：`quota_limits(plan_id, scope, target, "limit")`、
 `user_quota_overrides`、`quota_usage_logs(user_id, username, group_code, interface, cost, created_at)`、
 `quota_costs(group_code, interface, cost, status, interval, limit_count, window_sec)`。
