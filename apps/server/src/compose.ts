@@ -129,10 +129,15 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
   } else {
     const source = kv.get(`admin_password_source:${adminName}`) || 'unknown'
     const envMatches = envPass !== '' && users.verify(adminName, envPass) !== undefined
-    if (forceSync && envPass && !envMatches) {
+    // 「来源=env」的语义必须是「env 说了算」，否则这个标记只是装饰：改了 .env 的凭证、重启后
+    // 仍只有旧口令能登（连提示都写成"可能是面板上改过"，把人引到错误方向）。现场 2026-11-18。
+    // 只有来源=panel（或来源未标记、可能被面板改过）才不擅自覆盖。
+    const envAuthoritative = forceSync || source === 'env'
+    if (envPass && !envMatches && envAuthoritative) {
       users.setPassword(existing.id, envPass)
       kv.set(`admin_password_source:${adminName}`, 'env')
-      logger.warn(`ADMIN_PASSWORD_SYNC=true：管理员 ${adminName} 的口令已按 env 重置（覆盖了此前的值）`)
+      if (forceSync) logger.warn(`ADMIN_PASSWORD_SYNC=true：管理员 ${adminName} 的口令已按 env 重置（覆盖了此前的值）`)
+      else logger.warn(`ADMIN_PASSWORD 变过：管理员 ${adminName} 的口令已按 env 重置（口令来源=env，env 即权威）`)
     } else if (source === 'generated' && envPass) {
       // 上次是随机生成的口令（可能只出现在一次启动日志里）→ env 是更好的来源，直接接管
       users.setPassword(existing.id, envPass)
@@ -142,13 +147,14 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
       logger.info(`管理员 ${adminName} 的口令以面板为准（面板上改过）；如需用 env 覆盖：ADMIN_PASSWORD_SYNC=true`)
     } else if (envPass && !envMatches) {
       logger.warn(
-        `ADMIN_PASSWORD 与库中口令不一致（管理员 ${adminName}）。可能是面板上改过；要强制以 env 为准：ADMIN_PASSWORD_SYNC=true`,
+        `ADMIN_PASSWORD 与库中口令不一致，且口令来源未标记（管理员 ${adminName}）：不敢擅自覆盖。要强制以 env 为准：ADMIN_PASSWORD_SYNC=true`,
       )
     } else if (!envPass) {
       logger.warn(`未设置 ADMIN_PASSWORD：管理员 ${adminName} 沿用库中口令（忘了就设 ADMIN_PASSWORD_SYNC=true 再重启）`)
     }
   }
-  logger.info(`数据库 ${dbPath}　管理员 ${adminName}`)
+  // 启动日志必须能回答"凭什么口令登不上"：库路径 + 管理员 + 口令实际来源
+  logger.info(`数据库 ${dbPath}　管理员 ${adminName}（口令来源：${kv.get(`admin_password_source:${adminName}`) || 'unknown'}）`)
   // hashPassword 在播种之外也要可用（改密走 users.setPassword）
   void hashPassword
 

@@ -7,8 +7,16 @@ import { compose } from './compose.ts'
 function loadEnv(cwd = process.cwd()): void {
   const p = join(cwd, '.env')
   if (!existsSync(p)) return
-  const merged = parseDotEnv(readFileSync(p, 'utf8'), process.env)
+  const text = readFileSync(p, 'utf8')
+  const merged = parseDotEnv(text, process.env)
   for (const [k, v] of Object.entries(merged)) process.env[k] = v
+  // dotenv 惯例是「环境变量优先」：.env 里写了、但环境里已有非空同名校的键会被静默跳掉。
+  // 一声不响的结果是“改了 .env 不生效”——连把 ADMIN_PASSWORD 写进库的播种都跟着用旧值（现场 2026-11-18）。
+  // 只吼键名，值的部分永远不落日志。
+  const shadowed = Object.keys(parseDotEnv(text, {})).filter((k) => !(k in merged))
+  if (shadowed.length > 0) {
+    console.warn(`[loomproxy] .env 里的 ${shadowed.join(', ')} 被同名环境变量覆盖（环境优先，值未打印）`)
+  }
 }
 
 function debounce<T extends (...args: never[]) => void>(fn: T, ms: number): T {

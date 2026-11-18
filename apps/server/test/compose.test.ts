@@ -188,6 +188,10 @@ test('管理员口令：首启随机生成 → 写进 env 重启即生效；面�
       await attempt({ ADMIN_PASSWORD: 'env-pass', ADMIN_PASSWORD_SYNC: 'true' }, 'admin', 'env-pass'),
       200,
     )
+    // 来源回到 env 之后，env 就是权威：改 env 的口令、重启即生效（不用再加 SYNC）。
+    // 现场 2026-11-18：库里的来源标记写着 env，实际存的却是别处的口令，改了 .env 也登不上。
+    assert.equal(await attempt({ ADMIN_PASSWORD: 'env-pass-2' }, 'admin', 'env-pass-2'), 200, '来源=env 时改 env 即生效')
+    assert.equal(await attempt({ ADMIN_PASSWORD: 'env-pass-2' }, 'admin', 'env-pass'), 401, '旧 env 口令不能继续用')
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
