@@ -1,9 +1,10 @@
 // 插件宿主：目录扫描 → manifest 校验 → import() → 声明落地 → 原子换代 → 老代 drain。
 // in-process 模型下**代码不会被回收**，所以换代只是换注册表指针（迁移-TS-4 §2/§4）。
 import { pathToFileURL } from 'node:url'
-import { existsSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
-import { SDK_VERSION, type PluginManifest } from '@loomproxy/contract'
+import { randomBytes } from 'node:crypto'
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join, normalize, sep } from 'node:path'
+import { SDK_VERSION, parseSourceMeta, type PluginManifest } from '@loomproxy/contract'
 import type { Logger, Upstream } from '@loomproxy/kernel'
 import {
   SourceRegistry,
@@ -32,6 +33,30 @@ export type HostDeps = {
   upstream: Upstream
   /** 换代后等在飞请求结束的上限（默认 30s，与 systemd TimeoutStopSec 同量级） */
   drainTimeoutMs?: number
+}
+
+/** 一次「上传/粘贴安装」的入参：文件内容直接给，不落临时压缩包（省一个解压依赖与一层路径穿越风险） */
+export type InstallInput = {
+  code: string
+  version: string
+  /** 相对插件版本目录的文件路径 → 文件内容（文本）。必须含 manifest.json 与 manifest.entry 指向的入口 */
+  files: Record<string, string>
+}
+
+/** 目录名/源码只允许小写字母数字下划线（与 manifest 的 code 约束一致）；版本号禁 `/` 与 `..` */
+const CODE_RE = /^[a-z0-9_]+$/
+const VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z._-]*$/
+
+/**
+ * 把用户给的文件路径收进版本目录内：拒绝绝对路径与 `..`，`./x` 与 `x` 同义。
+ * 上传入口是**管理员**，但仍然要挡——一次路径穿越就是任意文件写。
+ */
+function safeRelPath(raw: string): string {
+  const rel = normalize(raw.replace(/^\.\//, '')).replace(/^\.\//, '')
+  if (rel === '' || rel.startsWith('..') || rel.startsWith('/') || rel.includes(`..${sep}`)) {
+    throw new Error(`非法文件路径：${raw}`)
+  }
+  return rel
 }
 
 export type PluginInfo = {
@@ -104,7 +129,8 @@ export class SourceHost {
   async scanSync(): Promise<PluginInfo[]> {
     const codes = existsSync(this.deps.pluginDir)
       ? readdirSync(this.deps.pluginDir, { withFileTypes: true })
-          .filter((d) => d.isDirectory())
+          // 点目录是安装暂存区（.staging-xxxx），不是插件；扫进来只会多一条 failed 记录
+          .filter((d) => d.isDirectory() && !d.name.startsWith('.'))
           .map((d) => d.name)
           .sort()
       : []
@@ -143,6 +169,73 @@ export class SourceHost {
     }
     this.cursor.set(code, vers.length - 1)
     return this.mustInfo(code)
+  }
+
+  /**
+   * 安装一个插件版本：校验 → 写盘（暂存目录 + 原子 rename）→ 立即换代。
+   *
+   * 三条纪律：
+   * ① **码与版本号都过白名单**再拼路径：`code=../x` 或 `version=../../etc` 就是任意文件写；
+   * ② 先写 `.staging-*` 再 rename：watcher 与扫描只认最终形态，不会捞到写了一半的版本；
+   * ③ 同名版本目录**已存在就拒绝**（不覆盖正在跑的产物），换版本请给新号。
+   *
+   * 注意：安装插件 = 允许在进程内执行任意代码，这是管理员的权力，不是普通调用方的。
+   */
+  async install(input: InstallInput): Promise<PluginInfo> {
+    if (!CODE_RE.test(input.code)) throw new Error(`源码只允许小写字母/数字/下划线：${input.code}`)
+    if (!VERSION_RE.test(input.version)) throw new Error(`版本号非法（不许含 / 或以 . 开头）：${input.version}`)
+
+    const files = Object.entries(input.files ?? {})
+    if (files.length === 0) throw new Error('没有文件内容')
+    const manifestRaw = input.files['manifest.json']
+    if (manifestRaw === undefined) throw new Error('缺少 manifest.json')
+    let manifest: PluginManifest
+    try {
+      manifest = JSON.parse(manifestRaw) as PluginManifest
+    } catch (e) {
+      throw new Error(`manifest.json 不是合法 JSON：${errText(e)}`)
+    }
+    // 声明位校验走与扫描同一条（zod）：非法 media_type/setting type/空 actions 在这里就失败，
+    // 不要等写进盘里再由 scan 记 failed
+    parseSourceMeta(manifest.meta)
+    if (manifest.meta.code !== input.code) {
+      throw new Error(`manifest.meta.code=${manifest.meta.code} 与提交的源码 ${input.code} 不一致`)
+    }
+    const entryRel = safeRelPath(String(manifest.entry ?? './index.mjs'))
+    if (input.files[entryRel] === undefined) throw new Error(`入口文件 ${entryRel} 不在提交的内容里`)
+
+    const codeDir = join(this.deps.pluginDir, input.code)
+    const target = join(codeDir, input.version)
+    if (existsSync(target)) throw new Error(`版本 ${input.code}@${input.version} 已存在（换一个版本号，或先卸载）`)
+
+    mkdirSync(this.deps.pluginDir, { recursive: true })
+    const staging = join(this.deps.pluginDir, `.staging-${randomBytes(6).toString('hex')}`)
+    try {
+      for (const [rawPath, content] of files) {
+        const rel = safeRelPath(rawPath)
+        const abs = join(staging, rel)
+        mkdirSync(dirname(abs), { recursive: true })
+        writeFileSync(abs, content)
+      }
+      mkdirSync(codeDir, { recursive: true })
+      renameSync(staging, target)
+    } catch (e) {
+      rmSync(staging, { recursive: true, force: true })
+      throw e
+    }
+
+    // 换代失败：老代还在跑就保留新目录（供排查/回滚），没有老代就清掉——
+    // 否则下一次扫描会把一个带病的版本当成"当前版本"，每次启动都报同一条错
+    const hadGeneration = this.loaded.has(input.code)
+    try {
+      return await this.reload(input.code)
+    } catch (e) {
+      if (!hadGeneration) {
+        rmSync(target, { recursive: true, force: true })
+        this.versions.delete(input.code)
+      }
+      throw e
+    }
   }
 
   /** 回滚到上一个版本目录（产物本来就在盘上，不用重新打包） */

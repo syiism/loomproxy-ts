@@ -7,6 +7,7 @@
 
     <div class="reveal flex flex-wrap items-center gap-4 mb-6">
       <button @click="load" class="btn-ghost btn-sm">刷新</button>
+      <button @click="installOpen = !installOpen" class="btn-primary btn-sm">{{ installOpen ? '取消添加' : '添加插件' }}</button>
       <button @click="reloadAll" class="btn-ghost btn-sm" :disabled="busy === 'all'">
         {{ busy === 'all' ? '换代中…' : '全部 reload' }}
       </button>
@@ -15,6 +16,34 @@
       </label>
       <span v-if="notice" class="text-xs text-text-muted">{{ notice }}</span>
     </div>
+
+    <!-- 添加插件：贴两个文件的内容即可（manifest 与入口）。安装 = 允许在进程内执行任意代码，
+         所以只有管理员能进来；同名版本已存在会被拒（不覆盖正在跑的产物）。 -->
+    <section v-if="installOpen" class="card reveal mb-6">
+      <h2 class="font-serif text-lg font-medium tracking-tight mb-4">添加插件</h2>
+      <div class="flex flex-wrap items-end gap-3 mb-3">
+        <label class="flex flex-col gap-1 text-xs text-text-muted">源码
+          <input v-model="form.code" class="input font-mono w-40" placeholder="my_novel" maxlength="64">
+        </label>
+        <label class="flex flex-col gap-1 text-xs text-text-muted">版本
+          <input v-model="form.version" class="input font-mono w-28" placeholder="0.1.0" maxlength="32">
+        </label>
+        <span class="text-xs text-text-muted">写进 plugins/&lt;源码&gt;/&lt;版本&gt;/，装好立即生效（reload）</span>
+      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <label class="flex flex-col gap-1 text-xs text-text-muted">manifest.json
+          <textarea v-model="form.manifest" class="input font-mono text-xs h-56" spellcheck="false" placeholder='{"sdk_version":"^1","entry":"./index.mjs","params":{"search":["query"]},"meta":{"code":"my_novel","display":"我的源","category":"demo","actions":["search"]}}'></textarea>
+        </label>
+        <label class="flex flex-col gap-1 text-xs text-text-muted">入口文件内容（默认 index.mjs）
+          <input v-model="form.entryName" class="input font-mono text-xs mb-1" placeholder="index.mjs" maxlength="128">
+          <textarea v-model="form.entry" class="input font-mono text-xs h-56" spellcheck="false" placeholder="export default { handlers: { search: async (ctx) => ({ bookList: [] }) } }"></textarea>
+        </label>
+      </div>
+      <div class="flex items-center gap-3 mt-4">
+        <button class="btn-primary btn-sm" :disabled="installing" @click="install">{{ installing ? '安装中…' : '安装并生效' }}</button>
+        <span class="text-xs text-text-muted">安装失败会把刚写入的目录清掉（不留带病的版本）；已存在同名版本会被拒。</span>
+      </div>
+    </section>
 
     <UiSpinner v-if="loading" />
     <UiEmpty v-else-if="error" title="加载失败" :text="error" />
@@ -68,6 +97,9 @@ import { adminApi } from '../../api/index.js'
 import { toast, revealObserve } from '../../utils.js'
 
 const plugins = ref([])
+const installOpen = ref(false)
+const installing = ref(false)
+const form = ref({ code: '', version: '0.1.0', entryName: 'index.mjs', manifest: '', entry: '' })
 const versions = ref({})
 const loading = ref(false)
 const error = ref('')
@@ -120,6 +152,27 @@ const reloadAll = async () => {
     toast(e.message, 'error')
   } finally {
     busy.value = ''
+  }
+}
+
+const install = async () => {
+  installing.value = true
+  notice.value = ''
+  try {
+    const code = form.value.code.trim()
+    const version = form.value.version.trim()
+    const entryName = (form.value.entryName || 'index.mjs').trim().replace(/^\.\//, '')
+    const files = { 'manifest.json': form.value.manifest, [entryName]: form.value.entry }
+    const r = await adminApi.installPlugin({ code, version, files })
+    notice.value = `已安装 ${r.code}@${r.version}（世代 ${r.generation}）`
+    toast('已安装并生效', 'success')
+    installOpen.value = false
+    form.value = { code: '', version: '0.1.0', entryName: 'index.mjs', manifest: '', entry: '' }
+    await load()
+  } catch (e) {
+    toast(e.message, 'error')
+  } finally {
+    installing.value = false
   }
 }
 

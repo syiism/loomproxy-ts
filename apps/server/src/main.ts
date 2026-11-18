@@ -49,7 +49,8 @@ async function main(): Promise<void> {
     const stopWatch = watch(config.pluginDir, { recursive: true }, (_ev, file) => {
       if (!file) return
       const code = file.split(/[\\/]/)[0]
-      if (code) reloadOne(code as never)
+      // 安装插件的暂存目录（.staging-*）不是插件：跳过，否则每次安装都会多一条"热更新失败"日志
+      if (code && !code.startsWith('.')) reloadOne(code as never)
     })
     shutdown.register(() => stopWatch.close())
   }

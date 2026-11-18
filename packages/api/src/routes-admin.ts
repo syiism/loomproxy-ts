@@ -515,6 +515,14 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
   })
 
   // ---- 数据源 ----
+  // 数据源 = **配置/授权主体**（分组、额度授权对象、榜单名单、启停），插件 = 它背后的实现。
+  // 两者用 code 关联：这一页把"装没装插件"投影出来（installed/plugin_*），
+  // 否则面板上"数据源存在"与"能用"是两件事却看不出来。
+  const pluginOf = (code: string) => {
+    const entry = deps.host?.registryRef.get(code)
+    if (!entry) return undefined
+    return { version: entry.version, state: entry.state, actions: entry.meta.actions, isolation: entry.isolation }
+  }
   app.get('/admin/data-sources', async (req, reply) => {
     if (!(await guard(req, reply))) return
     const ds = stores.dataSources as unknown as { listAll?: () => Array<Record<string, unknown>> }
@@ -522,13 +530,29 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
     const rank = rankPublicSet(stores.settings)
     const groups = stores.sourceGroups?.list() ?? []
     return ok(
-      (ds?.listAll?.() ?? []).map((row) => ({
-        ...row,
-        rank_public: rank.has(String(row['name'])),
-        group_name: groups.find((g) => g.id === Number(row['group_id'] ?? 0))?.name ?? '',
-      })),
+      (ds?.listAll?.() ?? []).map((row) => {
+        const plugin = pluginOf(String(row['name']))
+        return {
+          ...row,
+          rank_public: rank.has(String(row['name'])),
+          group_name: groups.find((g) => g.id === Number(row['group_id'] ?? 0))?.name ?? '',
+          installed: plugin !== undefined,
+          ...(plugin
+            ? {
+                plugin_version: plugin.version,
+                plugin_state: plugin.state,
+                plugin_isolation: plugin.isolation,
+                actions: plugin.actions,
+              }
+            : { actions: [] as string[] }),
+        }
+      }),
     )
   })
+  // 「新增数据源」= 登记一个**配置位**（分组/排序/启停/榜单/以后授权），它不含实现。
+  // 这一点必须说清楚：没有对应插件时，`/datasources` 目录里不会出现它、数据面 /{code}/* 回 404
+  // not_found。过去这里只写一行库、什么也不说，面板看着像"加了一个源"（2026-11-18 现场）。
+  // 真正的"上新一个源"是「源插件 → 添加插件」：插件加载时会 upsert 这一行。
   app.post('/admin/data-sources', async (req, reply) => {
     if (!(await guard(req, reply))) return
     const b = (req.body ?? {}) as { name?: string; display_name?: string; category?: string; description?: string; sort_order?: number; status?: number }
@@ -536,9 +560,29 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
       reply.code(400).send(fail(config.errorCode, '缺少源码或显示名'))
       return
     }
-    const ds = stores.dataSources as unknown as { create?: (i: never) => number }
+    if (!/^[a-z0-9_]+$/.test(b.name)) {
+      reply.code(400).send(fail(config.errorCode, '源码只允许小写字母/数字/下划线（与插件 manifest 的 code 同约束）'))
+      return
+    }
+    const ds = stores.dataSources as unknown as {
+      create?: (i: never) => number
+      listAll?(): Array<{ name: string }>
+    }
     if (!ds?.create) return unavailable(reply, '数据源存储未接')
-    return ok({ id: ds.create({ ...b, name: b.name, display_name: b.display_name } as never) })
+    if (ds.listAll?.().some((r) => r.name === b.name)) {
+      reply.code(400).send(fail(config.errorCode, `数据源 ${b.name} 已存在`))
+      return
+    }
+    const id = ds.create({ ...b, name: b.name, display_name: b.display_name } as never)
+    const installed = deps.host?.registryRef.get(b.name) !== undefined
+    return ok({
+      id,
+      name: b.name,
+      installed,
+      msg: installed
+        ? '已登记这一行配置'
+        : `已登记配置位 ${b.name}，但还没有插件实现它：数据面 /${b.name}/* 在装好插件前回 404。请到「源插件 → 添加插件」安装实现`,
+    })
   })
   app.patch('/admin/data-sources/:id', async (req, reply) => {
     if (!(await guard(req, reply))) return

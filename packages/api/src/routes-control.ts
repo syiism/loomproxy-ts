@@ -193,6 +193,29 @@ export function registerControlRoutes(app: FastifyInstance, deps: ControlDeps): 
     return ok(results)
   })
 
+  /**
+   * 安装插件（面板「源插件 → 添加插件」）：提交 manifest 与入口文件的内容，服务端校验后
+   * 写进 PLUGIN_DIR/<code>/<version>/ 并立即换代。
+   *
+   * 为什么不是"上传 zip"：解压要引入依赖，还要自己防 zip-slip；这里收的是逐个文件的文本，
+   * 路径校验只有一处（host.install 的 safeRelPath），面板也只需要两个文本框。
+   * **权限**：安装插件等于允许在进程内执行任意代码——只有管理员能做，且这条不开给 API Key。
+   */
+  app.post('/admin/sources/install', { bodyLimit: 4 * 1024 * 1024 }, async (req, reply) => {
+    if (!(await adminOnly(req, reply, config, deps.stores))) return
+    const b = (req.body ?? {}) as { code?: string; version?: string; files?: Record<string, string> }
+    if (!b.code || !b.version || !b.files || typeof b.files !== 'object') {
+      reply.code(400).send(fail(config.errorCode, '缺少 code / version / files'))
+      return
+    }
+    try {
+      const info = await deps.host.install({ code: b.code, version: b.version, files: b.files })
+      return ok(info)
+    } catch (e) {
+      reply.code(400).send(fail(config.errorCode, e instanceof Error ? e.message : String(e)))
+    }
+  })
+
   for (const op of ['reload', 'rollback'] as const) {
     app.post(`/admin/sources/:code/${op}`, async (req, reply) => {
       if (!(await adminOnly(req, reply, config, deps.stores))) return

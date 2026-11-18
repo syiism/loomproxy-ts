@@ -122,6 +122,13 @@ reload(code):
 
 ## 6. 运行期声明落地（对应 Go 的 `db.Init` + `RunSourceBoots`）
 
+> **两张表不是冗余**：`data_sources` 是**配置/授权主体**（id 稳定，被 `quota_limits.target`、
+> `source_groups`、`rank_public_sources`、`source_schedules`、`platform_source_configs`、
+> `user_source_configs` 引用），插件注册表是**实现**（code/version/actions/isolation/generation）。
+> 合并成一张表的代价：卸载插件就得删行 → 连带删授权/分组/额度历史，且没法"先配置、后装实现"。
+> 所以关系是单向投影：**插件是事实来源，`data_sources` 是它的投影 + 运营属性**；
+> 插件扫描 `upsert` 时**不覆盖**管理员改过的 `status`/`display`/`sort`。
+
 Go 版把声明位拆在三处（`init()` 注册 → `db.Init` 落行 → `OnBoot` 登记池）。热加载要求它们**可重入**：
 
 | 步骤 | 幂等规则 | 失败处置 |
@@ -137,6 +144,7 @@ Go 版把声明位拆在三处（`init()` 注册 → `db.Init` 落行 → `OnBoo
 |---|---|---|
 | 新增 `GET /admin/sources/plugins`（code/version/state/isolation/generation/inflight/dir/last_error） | ✅ 已落地 | `packages/api/src/routes.ts`；面板「源插件」页 |
 | 新增 `POST /admin/sources/:code/{reload,rollback,disable,unload}` + `POST /admin/sources/reload-all` | ✅ 已落地 | 同上；面板逐行按钮 + 页头「全部 reload」 |
+| 新增 `POST /admin/sources/install`（**添加插件**：提交 manifest 与入口文件内容 → 写盘 → 立即换代） | ✅ 已落地（2026-11-18） | `source-host/src/host.ts` 的 `install()`、`api/src/routes-control.ts`；面板「源插件 → 添加插件」 |
 | 明细加 `plugin_version` 列（可按版本筛） | ✅ 已落地（TS 分支） | `contract/src/calls.ts` 的 `CallLogRow`、`store/src/call-logs.ts`、`api/src/calls.ts` 出口记账、`GET /admin/monitor/history?plugin_version=`、面板「调用明细」页 |
 
 第三条仍是**跨契约改动**，落地的三处必须同批：① 数据结构（`CallLogRow`）② 写入口（请求出口 hook，不写在 handler 里，
@@ -172,6 +180,20 @@ worker（插件）            ┌─ source-kit 提供的 ctx.fetch(...) ─→ 
   这一条单独设计，不在本次范围。生产环境的 `plugins/` 目录属主与 `loomproxy` 用户一致，写权限只给部署账号。
 - manifest 校验不过、`sdk_version` 不符、目录里有符号链接越界 → 拒绝加载（Go 版 data_files 那条判据同形）。
 
+**「添加插件」的边界（`POST /admin/sources/install`）**：它把「从本地受信目录加载」扩成
+「管理员可以把包内容交给服务端落盘」，所以四条写死：
+
+1. 只有管理员（`adminOnly`，且 API Key 不算身份）；普通用户 403。
+2. 源码 `^[a-z0-9_]+$`、版本号 `^[0-9A-Za-z][0-9A-Za-z._-]*$`，文件路径拒绝绝对路径与 `..`
+   （`host.install` 的 `safeRelPath` 是唯一一处拼路径的地方）。
+3. 先写 `plugins/.staging-*` 再 `rename` 到 `<code>/<version>/`：扫描与 watcher 只认最终形态。
+   同名版本已存在 → 拒绝（不覆盖正在跑的产物）。
+4. 换代失败且该 code 没有老代 → 删掉刚写入的目录（不留"每次启动都报同一条错"的带病版本）；
+   有老代则保留目录供排查，老代继续跑。
+
+**仍然不做**：从 URL 下载、签名校验、沙箱。这两条要么一起做，要么都不做——
+半个签名校验比没有更糟（会让人以为验过）。
+
 ## 10. 失败与回退矩阵
 
 | 现场 | 处置 | 用户看到 |
@@ -183,6 +205,7 @@ worker（插件）            ┌─ source-kit 提供的 ctx.fetch(...) ─→ 
 | 老代 grace 到期仍有在飞请求 | in-process：自然结束（不 kill）；worker：`terminate()` 前再等一个 grace | 该请求可能 502 |
 | worker 死循环/OOM | 看门狗：单请求超时 > `timeout_pool` → terminate + 重起一代 | 该源 502/504，其它源不受影响 |
 | 插件把 `data_sources` 行改坏 | 平台不信任插件的 DB 写；插件只能通过 host API 声明 | — |
+| 管理员手动「新增数据源」但没装插件 | 那一行只是**配置位**（分组/排序/启停/榜单/未来授权），数据面 `/{code}/*` 回 404 `not_found`，`/datasources` 目录里不出现 | 面板数据源列表 `installed=false`；创建响应带 `msg` 说明 |
 
 ## 11. 每层怎么单独跑通（新增两格）
 

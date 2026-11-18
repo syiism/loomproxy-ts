@@ -605,6 +605,132 @@ test('源设置自注册：声明位落库（幂等不覆盖）、面板带 sour
   }
 })
 
+test('添加插件：安装 → 写盘 → 立即生效（数据面可调）；同版本重复/非法码/缺入口都 400', async () => {
+  const { app, root, host } = await makeApp()
+  try {
+    const H = { authorization: `Bearer ${adminToken()}` }
+    const manifest = JSON.stringify({
+      sdk_version: '^1',
+      entry: './index.mjs',
+      params: { search: ['key'] },
+      meta: { code: 'demo_new', display: '新装的源', category: 'demo', actions: ['search'], media_type: 'novel' },
+    })
+    const entry = `export default { handlers: { search: async () => ({ bookList: [] }) } }`
+
+    // 普通用户不许装（安装插件 = 允许执行任意代码）
+    const denied = await app.inject({
+      method: 'POST', url: '/admin/sources/install',
+      headers: { authorization: `Bearer ${userToken()}` },
+      payload: { code: 'demo_new', version: '0.1.0', files: { 'manifest.json': manifest, 'index.mjs': entry } },
+    })
+    assert.equal(denied.statusCode, 403)
+
+    const res = await app.inject({
+      method: 'POST', url: '/admin/sources/install', headers: H,
+      payload: { code: 'demo_new', version: '0.1.0', files: { 'manifest.json': manifest, 'index.mjs': entry } },
+    })
+    assert.equal(res.statusCode, 200)
+    const info = (res.json() as { data: { code: string; version: string; state: string } }).data
+    assert.equal(info.code, 'demo_new')
+    assert.equal(info.version, '0.1.0')
+    assert.equal(info.state, 'active')
+
+    // 立即生效：目录已出现在 /datasources，数据面可直接调
+    // （匿名仍要过免费套餐授权——"装上了"与"谁能用"是两件事，这里用管理员身份验证可达）
+    const catalog = await app.inject({ method: 'GET', url: '/datasources' })
+    assert.ok((catalog.json() as { data: Array<{ id: string }> }).data.some((d) => d.id === 'demo_new'))
+    assert.equal(
+      (await app.inject({ method: 'GET', url: '/demo_new/search?key=x', headers: H })).statusCode,
+      200,
+    )
+
+    // 同版本重复：拒绝覆盖（正在跑的产物不许被悄悄换掉）
+    const dup = await app.inject({
+      method: 'POST', url: '/admin/sources/install', headers: H,
+      payload: { code: 'demo_new', version: '0.1.0', files: { 'manifest.json': manifest, 'index.mjs': entry } },
+    })
+    assert.equal(dup.statusCode, 400)
+    assert.match((dup.json() as { msg: string }).msg, /已存在/)
+
+    // 非法源码 / 非法版本 / 缺入口：都在写盘前就被挡下
+    for (const bad of [
+      { code: '../evil', version: '1.0.0', files: { 'manifest.json': manifest, 'index.mjs': entry } },
+      { code: 'demo_x', version: '../../etc', files: { 'manifest.json': manifest, 'index.mjs': entry } },
+      { code: 'demo_x', version: '1.0.0', files: { 'manifest.json': manifest } },
+    ]) {
+      const r = await app.inject({ method: 'POST', url: '/admin/sources/install', headers: H, payload: bad })
+      assert.equal(r.statusCode, 400, JSON.stringify(bad.code))
+    }
+
+    // 入口抛错：没有老代 ⇒ 刚写入的目录被清掉，注册表里也没有它（不留带病的版本）
+    const broken = await app.inject({
+      method: 'POST', url: '/admin/sources/install', headers: H,
+      payload: {
+        code: 'demo_broken', version: '1.0.0',
+        files: {
+          'manifest.json': JSON.stringify({ sdk_version: '^1', entry: './index.mjs', params: { search: ['key'] }, meta: { code: 'demo_broken', display: 'B', category: 'demo', actions: ['search'] } }),
+          'index.mjs': `throw new Error('装不上')`,
+        },
+      },
+    })
+    assert.equal(broken.statusCode, 400)
+    assert.equal(host.info().find((i) => i.code === 'demo_broken' && i.state === 'active'), undefined)
+    assert.equal((await app.inject({ method: 'GET', url: '/demo_broken/search?key=x' })).statusCode, 404)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('数据源是配置位、插件是实现：新增数据源不带实现（installed=false，数据面 404），删除也不动插件', async () => {
+  const { app, root } = await makeApp()
+  try {
+    const H = { authorization: `Bearer ${adminToken()}` }
+
+    // ① 已有插件的数据源：列表里带 installed/plugin_version/actions（面板据此看出"装没装"）
+    const list = await app.inject({ method: 'GET', url: '/admin/data-sources', headers: H })
+    const demo = (list.json() as { data: Array<Record<string, unknown>> }).data.find((r) => r['name'] === 'demo_one')!
+    assert.equal(demo['installed'], true)
+    assert.equal(demo['plugin_version'], '1.0.0')
+    assert.deepEqual(demo['actions'], ['search', 'detail', 'chapter', 'content'])
+
+    // ② 手动新增：只登记配置位，并且**明说**还没有实现
+    const created = await app.inject({
+      method: 'POST', url: '/admin/data-sources', headers: H,
+      payload: { name: 'demo_planned', display_name: '规划中的源', category: 'demo', status: 1 },
+    })
+    assert.equal(created.statusCode, 200)
+    const createdBody = (created.json() as { data: { id: number; installed: boolean; msg: string } }).data
+    assert.equal(createdBody.installed, false)
+    assert.match(createdBody.msg, /还没有插件实现它/)
+
+    // 数据面：配置位 ≠ 能用。404 not_found，目录里也不出现
+    assert.equal((await app.inject({ method: 'GET', url: '/demo_planned/search?key=x' })).statusCode, 404)
+    const catalog = await app.inject({ method: 'GET', url: '/datasources' })
+    assert.equal((catalog.json() as { data: Array<{ id: string }> }).data.some((d) => d.id === 'demo_planned'), false)
+
+    // ③ 源码约束与重复：同一个位置不许登记两行
+    const badName = await app.inject({
+      method: 'POST', url: '/admin/data-sources', headers: H,
+      payload: { name: 'Bad-Name', display_name: 'x' },
+    })
+    assert.equal(badName.statusCode, 400)
+    const dup = await app.inject({
+      method: 'POST', url: '/admin/data-sources', headers: H,
+      payload: { name: 'demo_planned', display_name: 'x' },
+    })
+    assert.equal(dup.statusCode, 400)
+
+    // ④ 删配置位不影响插件实现：删 demo_planned 后 demo_one 照常可调
+    const del = await app.inject({ method: 'DELETE', url: `/admin/data-sources/${createdBody.id}`, headers: H })
+    assert.equal(del.statusCode, 200)
+    assert.equal((await app.inject({ method: 'GET', url: '/demo_one/search?key=x' })).statusCode, 200)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('reload-all：一次把所有插件换代，失败的各留 last_error', async () => {
   const { app, root } = await makeApp()
   try {

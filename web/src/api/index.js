@@ -134,6 +134,10 @@ export const adminApi = {
   disablePlugin: (code) => request('/admin/sources/' + code + '/disable', { method: 'POST' }),
   unloadPlugin: (code) => request('/admin/sources/' + code + '/unload', { method: 'POST' }),
   reloadAllPlugins: () => request('/admin/sources/reload-all', { method: 'POST' }),
+  // 添加插件：提交 manifest 与入口文件的**文本内容**，服务端校验后写盘并立即换代。
+  // 为什么不传 zip：解压要新依赖、还要自己防 zip-slip；路径校验只有服务端一处（host.install）。
+  installPlugin: ({ code, version, files }) =>
+    request('/admin/sources/install', { method: 'POST', body: { code, version, files } }),
   // 卡密（套餐兑换）
   createRedeemCodes: (payload) => request('/admin/redeem-codes', { method: 'POST', body: payload }),
   listRedeemCodes: ({ page = 1, pageSize = 20, batchNo, status, planId } = {}) =>
