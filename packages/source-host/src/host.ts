@@ -34,6 +34,12 @@ export type HostDeps = {
   upstream: Upstream
   /** 换代后等在飞请求结束的上限（默认 30s，与 systemd TimeoutStopSec 同量级） */
   drainTimeoutMs?: number
+  /**
+   * 一个插件版本**生效后**的声明落地钩子（装配层用：登记接口成本行、未来的数据文件核对）。
+   * 必须幂等：reload/回滚/重装都会再走一次。放在 host 之外，是因为"计费"是平台语义，
+   * 宿主不该知道成本是什么（否则 source-host 就依赖了额度域）。
+   */
+  onPluginActive?: (meta: import('@loomproxy/contract').SourceMeta) => void
 }
 
 /** 一次「上传/粘贴安装」的入参：文件内容直接给，不落临时压缩包（省一个解压依赖与一层路径穿越风险） */
@@ -337,6 +343,7 @@ export class SourceHost {
       }
       this.deps.settings.register(desc.manifest.meta.settings ?? [])
       this.deps.dataSources.upsert(desc.manifest.meta)
+      this.deps.onPluginActive?.(desc.manifest.meta)
       const worker = new WorkerPluginHost({
         code,
         entry: desc.entry,
@@ -370,6 +377,7 @@ export class SourceHost {
     // 声明落地：幂等（不覆盖管理员改过的值与 status）
     this.deps.settings.register(desc.manifest.meta.settings ?? [])
     this.deps.dataSources.upsert(desc.manifest.meta)
+    this.deps.onPluginActive?.(desc.manifest.meta)
     if (def.onBoot) {
       await def.onBoot({ settings: this.deps.settings, log: (m) => this.deps.logger.info(`onBoot: ${m}`) })
     }

@@ -87,6 +87,9 @@ async function makeApp() {
   seedBuiltinSettings(settings)
   const dataSources = new DbDataSources(db)
   const upstream = new Upstream({ config, logger })
+  // quota 必须在 host 之前建：扫描时 onPluginActive 就会登记成本行（晚建会撞 TDZ，
+  // 扫描把这当成加载失败 → 全套用例 404）
+  const quota = new DbQuota(db)
   const host = new SourceHost({
     pluginDir: config.pluginDir,
     logger,
@@ -95,6 +98,8 @@ async function makeApp() {
     dataSources,
     upstream,
     drainTimeoutMs: 500,
+    // 与 compose 同一条：插件生效即登记接口成本行（缺行 = 不计费）
+    onPluginActive: (meta) => quota.ensureDefaultCosts(meta.code, meta.actions),
   })
   await host.scanSync()
   // 每个请求把时钟推进 5s：本用例要验的是派发形状，不是限流
@@ -108,7 +113,6 @@ async function makeApp() {
   const apiKeys = new DbApiKeys(db)
   const callLogs = new DbCallLogs(db)
   const nameCache = new DbNameCache(db)
-  const quota = new DbQuota(db)
   const sourceGroups = new DbSourceGroups(db, quota)
   const quotaExtra = new DbQuotaExtra(db, quota)
   const blockedIPs = new DbBlockedIPs(db)
@@ -825,6 +829,44 @@ test('上传插件包（zip）：包根或 <源码>/<版本>/ 前缀都能装；
       200,
     )
     assert.ok(host.info().some((i) => i.code === 'zip_one' && i.state === 'active'))
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('计费：新装的源立刻有成本行并计入今日消耗；匿名调用不归属账号（不进流水）', async () => {
+  const { app, root, quota } = await makeApp()
+  try {
+    const H = { authorization: `Bearer ${adminToken()}` }
+    // 装一个插件：生效即登记每个动作的成本行（缺行 = 该接口不计费，流水永远空）
+    const res = await app.inject({
+      method: 'POST', url: '/admin/sources/install', headers: H,
+      payload: {
+        code: 'cost_src', version: '1.0.0',
+        files: {
+          'manifest.json': JSON.stringify({ sdk_version: '^1', entry: './index.mjs', params: { search: ['key'] }, meta: { code: 'cost_src', display: 'C', category: 'demo', actions: ['search'] } }),
+          'index.mjs': `export default { handlers: { search: async () => ({ bookList: [] }) } }`,
+        },
+      },
+    })
+    assert.equal(res.statusCode, 200)
+    const costRow = quota.costOf('cost_src', 'search')
+    assert.ok(costRow, '安装插件必须顺手登记成本行，否则"后装的源免费"')
+    assert.equal(costRow!.cost, 1)
+
+    // 管理员调用（有账号）→ 进流水、看板今日消耗 +1
+    await app.inject({ method: 'GET', url: '/cost_src/search?key=one', headers: H })
+    const dash1 = await app.inject({ method: 'GET', url: '/quota/dashboard', headers: H })
+    const card1 = (dash1.json() as { data: { sources: Array<{ source_code: string; used_today: number }> } }).data.sources.find((s) => s.source_code === 'cost_src')!
+    assert.equal(card1.used_today, 1)
+
+    // 匿名调用：不归属任何账号 → 不进流水（额度域是账号维度；Go 版匿名同样不计）
+    const before = card1.used_today
+    await app.inject({ method: 'GET', url: '/cost_src/search?key=two' })
+    const dash2 = await app.inject({ method: 'GET', url: '/quota/dashboard', headers: H })
+    const card2 = (dash2.json() as { data: { sources: Array<{ source_code: string; used_today: number }> } }).data.sources.find((s) => s.source_code === 'cost_src')!
+    assert.equal(card2.used_today, before, '匿名调用不该改变账号维度的今日消耗')
   } finally {
     await app.close()
     rmSync(root, { recursive: true, force: true })

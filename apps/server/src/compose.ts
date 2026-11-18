@@ -187,21 +187,21 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
     settings,
     dataSources,
     upstream,
+    // 插件生效即登记接口成本行（缺行 = 不计费）：**启动扫描与运行期安装都走这一条**，
+    // 否则"后装的源免费"只会在账单上看出来
+    onPluginActive: (meta) => quota.ensureDefaultCosts(meta.code, meta.actions),
   })
   // 「新接入一个源」要给它补上各内置套餐的授权行：限额即授权，缺这一行老用户会突然
   // "没有任何可用数据源"。**只对 scan 前不存在的源码补**——已存在的源（哪怕管理员把授权
   // 删了）不碰，否则就是"删了又自己回来"那个说不清的格子。
   const knownSources = new Set(dataSources.listAll().map((r) => r.name))
   const builtinPlans = plans.list().filter((p) => ['free', 'vip', 'admin'].includes(p.code))
+  // 成本行由 host 的 onPluginActive 钩子登记（见上）：启动扫描与运行期安装走同一条路径
   const infos = await host.scanSync()
-  // 每个已加载动作登记一条成本（缺省 1 点；面板「接口」页可改）。缺成本行 = 不计费，流水永远空
   for (const info of infos) {
     if (info.state !== 'active') continue
     const entry = registry.get(info.code)
     if (!entry) continue
-    for (const action of entry.meta.actions) {
-      if (!quota.costOf(info.code, action)) quota.upsertCost({ group_code: info.code, interface: action, cost: 1 })
-    }
     if (!knownSources.has(info.code)) {
       for (const plan of builtinPlans) {
         if (!quota.hasGrant(plan.id, info.code)) quota.grant(plan.id, 'source', info.code, defaultPerSourceLimit(plan.code))

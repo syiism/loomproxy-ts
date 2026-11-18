@@ -31,6 +31,17 @@ export class DbQuota {
     return this.db.all<LimitRow>("SELECT * FROM quota_limits WHERE plan_id = ? AND scope = 'source' ORDER BY target", planId)
   }
 
+  /**
+   * 默认成本行（每个动作 1 点）：缺这一行 = 该接口不计费，流水永远空。
+   * 装配期扫描与运行期「安装插件」必须走同一条（两处各抄一份就会漂移成
+   * "启动时装好的源计费、后装的源免费"）。
+   */
+  ensureDefaultCosts(code: string, actions: readonly string[], cost = 1): void {
+    for (const action of actions) {
+      if (!this.costOf(code, action)) this.upsertCost({ group_code: code, interface: action, cost })
+    }
+  }
+
   /** 批量授权（幂等 upsert）：同一 (plan, scope, target) 只留一行 */
   grant(planId: number, scope: string, target: string, limit: number): void {
     const now = nowIso()

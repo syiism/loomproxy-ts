@@ -351,6 +351,17 @@ book_ident, chapter_ident, media_type, result_count, content_withheld, **plugin_
 | 熔断/代理 | `CIRCUIT_BREAKER_ENABLED=true` `CIRCUIT_BREAKER_FAILURES=5` `CIRCUIT_BREAKER_COOLDOWN=30` `UPSTREAM_PROXIES` `UPSTREAM_PROXY_FILE` `UPSTREAM_UA_ROTATE=false`。**未实现**（Go 有、TS 没有，别配也别写进示例）：`UPSTREAM_PROXY_API*` 动态代理、代理三连败封禁 60s、代理失败换一个再回退直连重试 |
 | 服务 | `SERVER_HOST=0.0.0.0` `SERVER_PORT=8081` `SERVER_LOG_LEVEL=info` `TZ_OFFSET_HOURS=8` `ERROR_CODE=-1` `DATA_DIR=data` `DATA_FILE_GLOB=*.json` |
 | 监控/计费 | `MONITOR_RETENTION_DAYS=0` `MONITOR_BACKFILL_SEC=900` `BILLING_DEDUPE_SEC=300` `RANK_CACHE_SEC=60` |
+
+计费口径（2026-11-18 明确，两个都踩过）：
+
+- **只有"有账号且成功且非带内失败"才进 `quota_usage_logs`**；匿名（含 env 静态键）不归属任何账号，
+  不计费——这与 Go 同口径（匿名那一档只有 IP 可数）。
+- **成本行是计费的开关**：`quota_costs` 里没有 `(源码, 接口)` 那一行 = `cost=0` = 不计费、流水永远空。
+  所以成本行必须在**插件生效时**登记（`SourceHost` 的 `onPluginActive` 钩子 → `ensureDefaultCosts`），
+  启动扫描与运行期「安装插件」走同一条；只写在装配期的扫描循环里，就会出现
+  "启动时装好的源计费、后装的源免费"（现场 2026-11-18：管理员看板恒 0）。
+- 与 Go 的唯一有意偏离：Go 的 `billingEnabled() = AUTH_ENABLED`，`AUTH_ENABLED=false` 的开放部署
+  **完全不记**用户级消耗；本仓把额度域当正式功能，登录用户照记（否则看板/套餐/流水在默认配置下全空）。
 | 鉴权 | `AUTH_ENABLED=false` `API_KEYS` `AUTH_WHITELIST=/,,/data,/auth/register,/auth/login,/panel` `JWT_SECRET` `JWT_EXPIRE_HOURS=168` `ADMIN_USERNAME` `ADMIN_PASSWORD` |
 | DB/Redis | `DB_TYPE=mysql` `DB_HOST/PORT(3306)/USER/PASSWORD/NAME/SSLMODE` `REDIS_ENABLED=true` `REDIS_HOST/PORT(6379)/PASSWORD/DB(0)` |
 | 号池 | `POOL_ENABLED=true` `POOL_COLD_SPARES=2` `POOL_MAX_HOT=3` `POOL_MAX_DEAD=10` `POOL_RENEW_BEFORE_SEC=300` `POOL_HOOK_TIMEOUT_SEC=30` `POOL_MAINTAIN_SEC=60` `AGGREGATE_PER_SOURCE_MAX=4` |
