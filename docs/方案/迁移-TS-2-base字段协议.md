@@ -356,7 +356,13 @@ book_ident, chapter_ident, media_type, result_count, content_withheld, **plugin_
 
 - **只有"有账号且成功且非带内失败"才进 `quota_usage_logs`**；匿名（含 env 静态键）不归属任何账号，
   不计费——这与 Go 同口径（匿名那一档只有 IP 可数）。
-- **成本行是计费的开关**：`quota_costs` 里没有 `(源码, 接口)` 那一行 = `cost=0` = 不计费、流水永远空。
+- **成本行是计费的开关**：`quota_costs` 里那一行的 `cost` 决定每次调用扣多少；**`cost=0` 与"没有行"同义**
+  （都不计费），但**必须建行**——面板「接口」页按行编辑（`PUT /admin/quota-costs/:id`），
+  没有行就没有 id，"改成本"会静默打空。
+- **新接入源的默认档：只有正文计 1 单位**（`DEFAULT_ACTION_COST = { content: 1 }`，见
+  `packages/store/src/quota.ts`）。检索/详情/目录默认 0：它们是"找到正文"的前置步骤，
+  按次计费会让"翻目录"比"读正文"还贵。已有源的成本行**不追溯改**（管理员自己在「接口」页调，
+  这也是那条"不覆盖管理员改过的值"的同一条纪律）。
   所以成本行必须在**插件生效时**登记（`SourceHost` 的 `onPluginActive` 钩子 → `ensureDefaultCosts`），
   启动扫描与运行期「安装插件」走同一条；只写在装配期的扫描循环里，就会出现
   "启动时装好的源计费、后装的源免费"（现场 2026-11-18：管理员看板恒 0）。

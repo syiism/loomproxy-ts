@@ -188,7 +188,7 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
     dataSources,
     upstream,
     // 插件生效即登记接口成本行（缺行 = 不计费）：**启动扫描与运行期安装都走这一条**，
-    // 否则"后装的源免费"只会在账单上看出来
+    // 否则"后装的源免费"只会在账单上看出来。默认档：只有正文计 1，其余动作 0（可面板改）
     onPluginActive: (meta) => quota.ensureDefaultCosts(meta.code, meta.actions),
   })
   // 「新接入一个源」要给它补上各内置套餐的授权行：限额即授权，缺这一行老用户会突然

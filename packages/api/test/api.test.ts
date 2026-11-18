@@ -845,21 +845,33 @@ test('计费：新装的源立刻有成本行并计入今日消耗；匿名调�
       payload: {
         code: 'cost_src', version: '1.0.0',
         files: {
-          'manifest.json': JSON.stringify({ sdk_version: '^1', entry: './index.mjs', params: { search: ['key'] }, meta: { code: 'cost_src', display: 'C', category: 'demo', actions: ['search'] } }),
-          'index.mjs': `export default { handlers: { search: async () => ({ bookList: [] }) } }`,
+          'manifest.json': JSON.stringify({ sdk_version: '^1', entry: './index.mjs', params: { search: ['key'], content: ['bookId', 'itemId'] }, meta: { code: 'cost_src', display: 'C', category: 'demo', actions: ['search', 'content'] } }),
+          'index.mjs': `export default { handlers: { search: async () => ({ bookList: [] }), content: async () => ({ contentType: 'novel', data: { content: '正文' } }) } }`,
         },
       },
     })
     assert.equal(res.statusCode, 200)
-    const costRow = quota.costOf('cost_src', 'search')
-    assert.ok(costRow, '安装插件必须顺手登记成本行，否则"后装的源免费"')
-    assert.equal(costRow!.cost, 1)
+    // 默认成本档：**只有正文 1 单位**，检索/详情/目录是 0（免费，但行必须存在——
+    // 面板「接口」页按行编辑，没有行就没有 id，"改成本"会静默打空）
+    const searchCost = quota.costOf('cost_src', 'search')
+    assert.ok(searchCost, '安装插件必须顺手登记成本行，否则"后装的源免费"')
+    assert.equal(searchCost!.cost, 0, '检索默认免费')
+    assert.equal(quota.costOf('cost_src', 'content')?.cost, 1, '正文默认消耗 1 单位')
 
-    // 管理员调用（有账号）→ 进流水、看板今日消耗 +1
-    await app.inject({ method: 'GET', url: '/cost_src/search?key=one', headers: H })
+    // 管理员调正文（有账号）→ 进流水、看板今日消耗 +1；调检索不计
+    const contentRes = await app.inject({
+      method: 'GET', url: '/cost_src/content?bookId=b1&itemId=c1', headers: H,
+    })
+    assert.equal(contentRes.statusCode, 200)
     const dash1 = await app.inject({ method: 'GET', url: '/quota/dashboard', headers: H })
     const card1 = (dash1.json() as { data: { sources: Array<{ source_code: string; used_today: number }> } }).data.sources.find((s) => s.source_code === 'cost_src')!
     assert.equal(card1.used_today, 1)
+
+    // 默认免费的检索：同一个人再调一次，今日消耗不变
+    await app.inject({ method: 'GET', url: '/cost_src/search?key=free', headers: H })
+    const dashFree = await app.inject({ method: 'GET', url: '/quota/dashboard', headers: H })
+    const cardFree = (dashFree.json() as { data: { sources: Array<{ source_code: string; used_today: number }> } }).data.sources.find((s) => s.source_code === 'cost_src')!
+    assert.equal(cardFree.used_today, 1, '检索成本 0：不记账')
 
     // 匿名调用：不归属任何账号 → 不进流水（额度域是账号维度；Go 版匿名同样不计）
     const before = card1.used_today

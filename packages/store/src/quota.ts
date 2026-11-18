@@ -15,6 +15,18 @@ export type CostRow = {
 }
 export type UsageRow = { id: number; user_id: number; username: string; group_code: string; interface: string; cost: number; created_at: string }
 
+/**
+ * 接口默认成本档（**唯一一处**）：只有正文（content）消耗 1 单位。
+ * 检索/详情/目录默认免费——它们是"找到正文"的前置步骤，按次计费会让"翻目录"比"读正文"还贵。
+ * 免费动作也建行（成本 0）：面板「接口」页是按行编辑的，没有行就没有 id，改成本的请求会静默打空。
+ * 管理员改完立刻生效（读侧每次现取），不走重启。
+ */
+export const DEFAULT_ACTION_COST: Readonly<Record<string, number>> = { content: 1 }
+
+export function defaultCostFor(action: string): number {
+  return DEFAULT_ACTION_COST[action] ?? 0
+}
+
 export class DbQuota {
   private readonly db: SqliteDb
 
@@ -32,13 +44,15 @@ export class DbQuota {
   }
 
   /**
-   * 默认成本行（每个动作 1 点）：缺这一行 = 该接口不计费，流水永远空。
+   * 默认成本行（**只有正文 content 计 1 单位，其余动作 0**）：缺这一行 = 该接口不计费。
+   * 为什么给免费动作也建行：面板「接口」页是按行编辑的（`PUT /admin/quota-costs/:id`），
+   * 没有行就没有 id，改成本的请求会静默打空——"免费"必须是**可编辑的 0**，不是"没有这一行"。
    * 装配期扫描与运行期「安装插件」必须走同一条（两处各抄一份就会漂移成
    * "启动时装好的源计费、后装的源免费"）。
    */
-  ensureDefaultCosts(code: string, actions: readonly string[], cost = 1): void {
+  ensureDefaultCosts(code: string, actions: readonly string[]): void {
     for (const action of actions) {
-      if (!this.costOf(code, action)) this.upsertCost({ group_code: code, interface: action, cost })
+      if (!this.costOf(code, action)) this.upsertCost({ group_code: code, interface: action, cost: defaultCostFor(action) })
     }
   }
 
