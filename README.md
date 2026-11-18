@@ -106,6 +106,16 @@ Node 24 直接跑 `.ts`（type stripping），所以**用例不需要构建**；
 转写口径：**算法与常量逐字节对齐**（`test/protocol.test.ts` 用参考实现跑出的黄金值钉住），
 但宿主桥（Legado 的 `java.*`）换成了 Node 的 Buffer/crypto 与平台唯一的取数出口 `ctx.fetch`；
 设备画像是按固定种子派生的稳定值（游客态，服务端不校验）。凭据/密文常量不进文档，只在代码里。
+
+两个源包的 `explore`（发现）都从 `loomproxy-deploy` 移植（那边是 Go 实现，上游参数块"原样搬运"）：
+
+| 源 | 发现入口 | 上游 |
+|---|---|---|
+| `fq_novel` | `category` + `group`（男频/女频/出版）+ `page` | 免签明文口：`new_category/book_list`（分类书单）/ `bookmall/cell/change`（无分类时兜底） |
+| `sq_novel` | `category` = `male`\|`female` / `cat/<itemId>/<group>` / `rank/<ruleId>/<group>` + `page` | 分类走 H5 签名口（`column/allitems` → `categoryAndTag/books/h5`），榜单走 App 加密口 `bookrank/details` |
+
+书旗的 H5 签名口**不需要 Bearer**（2026-11-18 实测匿名+正确签名即 200），所以没有搬 deploy 那份
+token 缓存——少一条会过期的凭证状态。
 命名约定：`<站点>_<媒介>`——同一个站点的其它形态各起一包（如 `sq_audio` / `sq_comic`），
 **平台不做源特例**，形态由包自己的 `meta.media_type` 与字段映射决定。
 
