@@ -279,3 +279,28 @@ test('worker 的取数走主线程桥：worker 里没有自己的 undici，缓�
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('世代与加载次数是两件事：generation 是全局序号（跨源单调），loads 才是这个源的加载次数', async () => {
+  const dir = tmpPlugins(['worker_one'])
+  try {
+    const { host } = makeHost(dir)
+    const first = await host.scanSync()
+    const byCode = new Map(first.map((i) => [i.code, i]))
+    const ok = byCode.get('ok_one')!
+    const bad = byCode.get('bad_manifest')!
+    // 同时加载两个源：世代号不同（全局唯一，才能区分"在飞请求属于哪一代"）
+    assert.notEqual(ok.generation, bad.generation)
+    assert.equal(ok.loads, 1)
+    assert.equal(bad.loads, 0, '加载失败不算一次加载')
+
+    // 只 reload ok_one：它的 generation 前进、loads+1；别的源两格都不动
+    await host.reload('ok_one')
+    const after = new Map(host.info().map((i) => [i.code, i]))
+    assert.ok(after.get('ok_one')!.generation > ok.generation)
+    assert.equal(after.get('ok_one')!.loads, 2)
+    assert.equal(after.get('bad_manifest')!.generation, bad.generation)
+    await host.dispose()
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

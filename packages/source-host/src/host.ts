@@ -71,7 +71,10 @@ export type PluginInfo = {
   version: string
   state: RegisteredSource['state']
   isolation: string
+  /** **全局**换代序号（registry 的单调计数）：唯一标识"第几次加载"，不是"这个源加载过几次" */
   generation: number
+  /** 这个 code 本进程内成功加载的次数（reload/回滚/重装都算）——与上一格分开，避免误读 */
+  loads: number
   inflight: number
   dir: string
   last_error?: string
@@ -90,6 +93,8 @@ export class SourceHost {
   private readonly failures = new Map<string, string>()
   /** worker 隔离模式下的插件句柄（in-process 的插件不在这张表里） */
   private readonly workers = new Map<string, WorkerPluginHost>()
+  /** 每个 code 的**成功加载次数**（展示用；generation 是全局限代序号，两件事别混） */
+  private readonly loadCounts = new Map<string, number>()
   private readonly inflight = new Map<string, number>()
   private readonly drainWaiters = new Map<string, (() => void)[]>()
   private readonly fetch: ReturnType<typeof createFetchFacade>
@@ -370,6 +375,7 @@ export class SourceHost {
       })
       this.loaded.set(code, { code, version, dir: desc.dir, entry: desc.entry, manifest: desc.manifest })
       this.failures.delete(code)
+      this.loadCounts.set(code, (this.loadCounts.get(code) ?? 0) + 1)
       this.deps.logger.info(`插件 ${code}@${version} 已生效（worker 隔离，generation=${this.registry.generation}）`)
       return
     }
@@ -402,6 +408,7 @@ export class SourceHost {
     }
     this.loaded.set(code, { code, version, dir: desc.dir, entry: desc.entry, manifest: desc.manifest })
     this.failures.delete(code)
+    this.loadCounts.set(code, (this.loadCounts.get(code) ?? 0) + 1)
     this.deps.logger.info(`插件 ${code}@${version} 已生效（generation=${this.registry.generation}）`)
 
     // 老代 drain：等它身上的在飞请求走完，再调 dispose
@@ -489,6 +496,8 @@ export class SourceHost {
     if (poolName) await this.deps.pools?.unregister(poolName)
     if (cur?.def.dispose) await cur.def.dispose()
     this.failures.delete(code)
+    // 重新装回来从 0 数：跨两次安装累加的"加载次数"更费解
+    this.loadCounts.delete(code)
   }
 
   /** 停机/测试收尾：把所有 worker 插件停掉（in-process 的没有线程要收） */
@@ -511,6 +520,7 @@ export class SourceHost {
         state: e.state,
         isolation: e.isolation,
         generation: e.generation,
+        loads: this.loadCounts.get(e.code) ?? 0,
         inflight: this.inflight.get(e.code) ?? 0,
         dir: loaded?.dir ?? '',
         ...(this.failures.get(e.code) ? { last_error: this.failures.get(e.code) as string } : {}),

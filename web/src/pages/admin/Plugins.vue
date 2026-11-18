@@ -80,7 +80,10 @@
       <table class="table-base">
         <thead>
           <tr>
-            <th>源码</th><th>版本</th><th>状态</th><th>隔离</th><th>世代</th><th>在飞</th><th>可用版本</th><th>操作</th>
+            <th>源码</th><th>版本</th><th>状态</th><th>隔离</th>
+            <th title="全局限代序号：本次进程里第几次加载（跨源单调递增，用于区分在飞请求属于哪一代）">世代</th>
+            <th title="这个源本进程内成功加载的次数（reload/回滚/重装都算）">加载</th>
+            <th>在飞</th><th>可用版本</th><th>操作</th>
           </tr>
         </thead>
         <tbody>
@@ -93,6 +96,7 @@
             </td>
             <td class="text-xs text-text-muted">{{ p.isolation }}</td>
             <td class="font-mono text-xs">{{ p.generation }}</td>
+            <td class="font-mono text-xs text-text-muted">{{ p.loads ?? 0 }}</td>
             <td class="font-mono text-xs">{{ p.inflight }}</td>
             <td class="font-mono text-xs text-text-muted">{{ (versions[p.code] || []).join(' → ') || '—' }}</td>
             <td>
