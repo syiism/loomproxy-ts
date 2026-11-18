@@ -14,7 +14,7 @@
 4. **Node strip-only 语法**：不用 `enum` / `namespace` / 构造器参数属性 / 装饰器。
    类型导入一律 `import type`（`verbatimModuleSyntax`）。
 5. **源包只做试点**：目前有两个——`packages/plugins/fq_novel`（协议层复用外部实现）与
-   `packages/plugins/shuqi`（Legado JS 源**转写**：算法/常量对齐参考实现，用黄金值用例钉住）。
+   `packages/plugins/sq_novel`（Legado JS 源**转写**：算法/常量对齐参考实现，用黄金值用例钉住）。
    新源照这个结构（一源一包、`manifest.json` 是唯一声明位、映射逻辑进 `src/normalize.ts` 且可单测、
    宿主用 `packages/source-host/test/fixtures/*` 夹具验证）。
    **协议层复用外部参考实现**（`/home/muyang/work/novels/fanq`，见 README「外部依赖」）时，
