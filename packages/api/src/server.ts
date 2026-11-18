@@ -121,6 +121,13 @@ export function buildServer(deps: ApiDeps): FastifyInstance {
     settings: deps.settings,
     ledger: deps.ledger ?? new Ledger(),
     limiter: deps.limiter ?? new RateLimiter(),
+    // 匿名（免费档）能不能用某个源 = 内置 `free` 套餐里有没有那一行（限额即授权）。
+    // 过去这里是"全放行"，于是匿名不受任何套餐约束；读不到套餐/额度时**失败关闭**。
+    freePlanAllows: (source: string) => {
+      const freePlanId = deps.plans?.list().find((p) => p.code === 'free')?.id
+      if (freePlanId === undefined || !deps.quota) return false
+      return deps.quota.hasGrant(freePlanId, source)
+    },
     ...(deps.callLogs ? { callLogs: deps.callLogs } : {}),
     ...(deps.sessions ? { sessions: deps.sessions } : {}),
     ...(deps.apiKeys ? { apiKeys: deps.apiKeys } : {}),

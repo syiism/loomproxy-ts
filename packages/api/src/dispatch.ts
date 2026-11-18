@@ -143,15 +143,43 @@ export function createDispatcher(deps: DispatchDeps) {
       return
     }
 
+    // 身份与留存同意位：**必须早于访问判定**（判定要读 plan_id / 角色 / 同意位）
+    const user = identity.userId !== undefined ? deps.users?.byId(identity.userId) : undefined
+    // 留存同意位（隐私协议的实现点）：匿名/env 键没有用户对象，按默认档（同意）走
+    const withheld = user ? !user.content_consent : false
+
+    // 鉴权闸（Go 的 apiauth 中间件同语义）：AUTH_ENABLED=true 时数据面必须带凭证，
+    // 白名单路径（AUTH_WHITELIST，默认 /,/data,/auth/register,/auth/login,/panel）除外。
+    // AUTH_ENABLED=false 不拦——那是"可选鉴权"，不是"忘了配"。文案与 Go 逐字一致：
+    // 调用方要能分清"没带"与"带了但无效"。
+    const pathOnly = (req.url.split('?')[0] ?? '') as string
+    const whitelisted = deps.config.authWhitelist.some(
+      (w) => w !== '' && (pathOnly === w || pathOnly.startsWith(`${w}/`)),
+    )
+    const hasCredential = identity.userId !== undefined || identity.envKey === true
+    if (deps.config.authEnabled && !hasCredential && !whitelisted) {
+      reply.code(401).send({
+        code: deps.config.errorCode,
+        msg: '缺少鉴权凭证（Authorization Bearer / Cookie / X-API-Key / api_key）',
+      })
+      return
+    }
+
     // 400：访问判定（源存在 → 启用 → 匿名免费档 → 管理员 → 套餐授权）
       const ds = deps.dataSources.get(source)
       const reason = sourceAccessVerdict({
         meta: entry.meta,
         enabled: ds?.status === 1,
         caller:
-          identity.userId === undefined
-            ? { kind: 'anonymous', freePlanAllows: (deps.freePlanAllows ?? (() => true))(source) }
-            : { kind: 'user', isAdmin: identity.roles.includes('admin'), hasPlan: true, granted: true },
+          identity.userId !== undefined
+            ? {
+                kind: 'user',
+                isAdmin: identity.roles.includes('admin'),
+                hasPlan: user?.plan_id != null,
+                // 限额即授权：套餐里没有这个源那一行 = 不能用。读不到额度存储时失败关闭。
+                granted: user?.plan_id != null && (deps.quota ? deps.quota.hasGrant(user.plan_id, source) : false),
+              }
+            : { kind: 'anonymous', freePlanAllows: (deps.freePlanAllows ?? (() => false))(source) },
       })
       if (reason !== '') {
         const code = reason === 'not_found' ? 404 : reason === 'need_login' ? 401 : 403
@@ -161,9 +189,6 @@ export function createDispatcher(deps: DispatchDeps) {
 
       // 500：额度预检（每次现取成本与生效额度：面板改完立刻生效）
       const quota = deps.quota
-      const user = identity.userId !== undefined ? deps.users?.byId(identity.userId) : undefined
-      // 留存同意位（隐私协议的实现点）：匿名/env 键没有用户对象，按默认档（同意）走
-      const withheld = user ? !user.content_consent : false
       const costRow = quota?.costOf(source, action)
       const cost = costRow && costRow.status === 1 ? costRow.cost : 0
       const since = user && quota ? quota.startOfWindow(user.id, deps.config.tzOffsetHours) : ''

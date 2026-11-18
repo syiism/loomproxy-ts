@@ -37,6 +37,19 @@ export const BUILTIN_SETTINGS: SettingDecl[] = [
   { key: 'suspect_distinct_ips', type: 'number', default: '8', description: '窗口内不同 IP 数达到该值即在面板标红（只标红，不因此踢人）' },
 ]
 
+/**
+ * 内置套餐的每源默认额度（与 Go 的 builtinPlanLimitDefaults 同值）。
+ * **限额即授权**：这一行的存在同时就是"这个套餐能用这个源"——所以"新接入一个源"
+ * 必须给它补上这一行，否则老用户会突然"没有任何可用数据源"。
+ * 只在**新建套餐**与**新接入源**两个时点播种；管理员删掉的授权不许每次启动又发回去。
+ */
+export const BUILTIN_PLAN_LIMIT_DEFAULTS = { free: 100, vip: 1000, admin: -1 } as const
+
+export function defaultPerSourceLimit(planCode: string): number {
+  const v = (BUILTIN_PLAN_LIMIT_DEFAULTS as Record<string, number>)[planCode]
+  return v ?? -1 // 自定义套餐没有默认档：-1（不限）
+}
+
 /** 已废弃的键：启动期清掉（留着会以"未被管理的 key"赖在面板「自定义配置」卡里，看着像还能生效） */
 export const REMOVED_SETTINGS = ['rank_public_enabled', 'legado_import_url', 'site_name']
 

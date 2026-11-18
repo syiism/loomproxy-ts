@@ -112,9 +112,13 @@ async function makeApp() {
   ]) {
     roles.create(r)
   }
-  const plan = plans.create({ name: '基础版', code: 'basic' })
+  // 匿名档读的是内置 `free` 套餐的授权行（限额即授权），所以夹具里必须有一条 code=free 的套餐，
+  // 并给 demo_one 授权——否则匿名调用会被判成 need_login（这正是 Go 版播种做的事）
+  const plan = plans.create({ name: '基础版', code: 'free' })
   users.create({ username: 'admin', password: 'secret-pass', planId: plan.id, roles: ['admin'] })
   users.create({ username: 'u', password: 'u-pass', planId: plan.id, roles: ['user'] })
+  // 匿名/免费档的授权：限额即授权，缺这一行匿名调用会被判 need_login
+  quota.grant(plan.id, 'source', 'demo_one', 100)
   const app = buildServer({
     config, logger, upstream, host, dataSources, settings, limiter,
     users, roles, plans, sessions, apiKeys, callLogs, nameCache, quota, quotaExtra, sourceGroups, blockedIPs, devices,
@@ -516,6 +520,43 @@ test('留存同意位：关掉之后内容维度在写进明细之前就被抹�
   }
 })
 
+test('授权即准入：匿名没有免费档授权 → need_login；用户套餐不含该源 → 403（不是"全放行"）', async () => {
+  const { app, root, quota, plans } = await makeApp()
+  try {
+    const freeId = plans.list().find((p) => p.code === 'free')!.id
+    // 匿名：把免费档的授权摘掉 → 不能再用（过去这里默认全放行）
+    quota.removeLimit(quota.limitsOfPlan(freeId).find((l) => l.target === 'demo_one')!.id)
+    const anon = await app.inject({ method: 'GET', url: '/demo_one/search?key=x' })
+    assert.equal(anon.statusCode, 401)
+    assert.match((anon.json() as { msg: string }).msg, /请先登录/)
+
+    // 用户：套餐里没有这一行 → 403 ungranted（额度填 -1 也算授权，这里是"根本没有行"）
+    const noGrant = await app.inject({
+      method: 'GET', url: '/demo_one/search?key=x',
+      headers: { authorization: `Bearer ${userToken()}` },
+    })
+    assert.equal(noGrant.statusCode, 403)
+    assert.match((noGrant.json() as { msg: string }).msg, /套餐不包含/)
+
+    // 授权后排上；管理员一直能用（不受套餐限制）
+    quota.grant(freeId, 'source', 'demo_one', -1)
+    const granted = await app.inject({
+      method: 'GET', url: '/demo_one/search?key=x',
+      headers: { authorization: `Bearer ${userToken()}` },
+    })
+    assert.equal(granted.statusCode, 200, '额度 -1（不限）也是授权')
+    assert.equal((await app.inject({ method: 'GET', url: '/demo_one/search?key=x' })).statusCode, 200)
+    const admin = await app.inject({
+      method: 'GET', url: '/demo_one/search?key=x',
+      headers: { authorization: `Bearer ${adminToken()}` },
+    })
+    assert.equal(admin.statusCode, 200)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('reload-all：一次把所有插件换代，失败的各留 last_error', async () => {
   const { app, root } = await makeApp()
   try {
@@ -687,6 +728,7 @@ test('默认设置真的生效：注册开关/默认角色与套餐/邮箱名单
     // 打开注册 + 默认角色/套餐（plan 用 free）
     settings.set('register_enabled', 'true')
     settings.set('default_role', 'user')
+    plans.create({ name: '基础版', code: 'basic' })
     settings.set('default_quota_plan', 'basic')
     const okRes = await app.inject({
       method: 'POST',
@@ -810,6 +852,8 @@ test('套餐授权：批量授权回 created/skipped、限额 -1 视为「已授
   try {
     const H = { authorization: `Bearer ${adminToken()}` }
     const planId = plans.list()[0]!.id
+    // 夹具给匿名档授权过 demo_one；这一组断言要从"空授权"开始
+    quota.removeLimit(quota.limitsOfPlan(planId).find((l) => l.target === 'demo_one')!.id)
 
     // 面板的默认 bulkLimit 是 -1（不限）——这一步以前会被当成"没授权"
     const first = await app.inject({ method: 'POST', url: `/admin/quotas/plans/${planId}/sources`, headers: H, payload: { sources: ['demo_one'], limit: -1 } })

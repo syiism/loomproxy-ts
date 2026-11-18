@@ -5,6 +5,7 @@ import { randomBytes } from 'node:crypto'
 import { TtlCache, Upstream, createLogger, loadConfig, type Config, type Logger } from '@loomproxy/kernel'
 import {
   DbKv,
+  defaultPerSourceLimit,
   seedBuiltinSettings,
   DbApiKeys,
   DbCallLogs,
@@ -104,8 +105,10 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
   for (const r of BUILTIN_ROLES) {
     if (!roles.list().some((x) => x.code === r.code)) roles.create(r)
   }
-  const defaultPlan = plans.list()[0] ?? // 与内置设置 default_quota_plan=free 对齐（否则"新用户默认套餐"这个键指向一个不存在的 code）
-    plans.create({ name: '免费版', code: 'free', description: '默认套餐' })
+  // 内置设置 default_quota_plan 的值是 `free`：这条 code 必须真的存在，否则"新用户默认套餐"
+  // 指向一个不存在的套餐（匿名免费档与注册用户都会因此拿不到任何源）
+  const freePlan = plans.list().find((p) => p.code === 'free') ?? plans.create({ name: '免费版', code: 'free', description: '默认套餐' })
+  const defaultPlan = plans.list()[0] ?? freePlan
   // ---- 管理员口令：来源标记决定了"重启后 env 里的密码还算不算数" ----
   // 现场（2026-11-17）：首启没写 ADMIN_PASSWORD → 随机生成并打印；之后把密码写进 .env 再重启，
   // 因为"已存在就不动"，env 里的密码永远不生效，登录一直失败。分不清来源就会这么猜。
@@ -179,6 +182,11 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
     dataSources,
     upstream,
   })
+  // 「新接入一个源」要给它补上各内置套餐的授权行：限额即授权，缺这一行老用户会突然
+  // "没有任何可用数据源"。**只对 scan 前不存在的源码补**——已存在的源（哪怕管理员把授权
+  // 删了）不碰，否则就是"删了又自己回来"那个说不清的格子。
+  const knownSources = new Set(dataSources.listAll().map((r) => r.name))
+  const builtinPlans = plans.list().filter((p) => ['free', 'vip', 'admin'].includes(p.code))
   const infos = await host.scanSync()
   // 每个已加载动作登记一条成本（缺省 1 点；面板「接口」页可改）。缺成本行 = 不计费，流水永远空
   for (const info of infos) {
@@ -187,6 +195,12 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
     if (!entry) continue
     for (const action of entry.meta.actions) {
       if (!quota.costOf(info.code, action)) quota.upsertCost({ group_code: info.code, interface: action, cost: 1 })
+    }
+    if (!knownSources.has(info.code)) {
+      for (const plan of builtinPlans) {
+        if (!quota.hasGrant(plan.id, info.code)) quota.grant(plan.id, 'source', info.code, defaultPerSourceLimit(plan.code))
+      }
+      logger.info(`新源 ${info.code} 已授权给内置套餐：${builtinPlans.map((p) => p.code).join(',') || '（无）'}`)
     }
   }
   logger.info(`插件扫描完成：${infos.length} 个（active=${infos.filter((i) => i.state === 'active').length}）`)

@@ -269,3 +269,55 @@ test('文档导航 vs API：面板页给 HTML，API 给 JSON；report.html 未�
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('数据面鉴权闸：AUTH_ENABLED=true 必须带凭证（白名单除外）；false 是可选鉴权', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'loomproxy-auth-'))
+  try {
+    const v = join(root, 'plugins', 'p_one', '1.0.0')
+    mkdirSync(v, { recursive: true })
+    writeFileSync(join(v, 'manifest.json'), JSON.stringify({
+      sdk_version: '^1', entry: './index.mjs', params: { search: ['key'] },
+      meta: { code: 'p_one', display: 'P1', category: 'p', actions: ['search'], status: 1 },
+    }))
+    writeFileSync(join(v, 'index.mjs'), `export default { handlers: { search: async () => ({ bookList: [] }) } }`)
+    const base = {
+      PLUGIN_DIR: join(root, 'plugins'),
+      DATA_DIR: join(root, 'data'),
+      JWT_SECRET: 'x'.repeat(32),
+      ADMIN_PASSWORD: 'pw',
+    }
+    const boot = async (extra: Record<string, string>) => compose({ env: { ...base, ...extra }, logger: silentLogger() })
+
+    // AUTH_ENABLED=true：无凭证 → 401，文案与 Go 版逐字一致
+    {
+      const c = await boot({ AUTH_ENABLED: 'true' })
+      const anon = await c.app.inject({ method: 'GET', url: '/p_one/search?key=x' })
+      assert.equal(anon.statusCode, 401)
+      assert.match((anon.json() as { msg: string }).msg, /缺少鉴权凭证/)
+
+      // 带合法 token（数据面也认）→ 放行
+      const login = await c.app.inject({ method: 'POST', url: '/auth/login', payload: { username: 'admin', password: 'pw' } })
+      const token = (login.json() as { data: { token: string } }).data.token
+      const authed = await c.app.inject({ method: 'GET', url: '/p_one/search?key=x', headers: { authorization: `Bearer ${token}` } })
+      assert.equal(authed.statusCode, 200)
+
+      // 坏票在非白名单路径上仍按"没凭证"拒（解析失败按匿名，不是按通过）
+      const badToken = await c.app.inject({
+        method: 'GET', url: '/p_one/search?key=x',
+        headers: { authorization: 'Bearer not-a-token' },
+      })
+      assert.equal(badToken.statusCode, 401)
+      await c.app.close()
+    }
+
+    // AUTH_ENABLED=false：可选鉴权——匿名走免费套餐那一档（新源已由装配播种授权），
+    // 带合法凭证则认出身份（管理员不受套餐限制）
+    {
+      const c = await boot({})
+      assert.equal((await c.app.inject({ method: 'GET', url: '/p_one/search?key=x' })).statusCode, 200)
+      await c.app.close()
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

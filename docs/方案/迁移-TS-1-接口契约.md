@@ -68,6 +68,12 @@
 失败文案固定为「缺少鉴权凭证（Authorization Bearer / Cookie / X-API-Key / api_key）」，
 **带了错票要报票的错**（密钥被撤销/归属用户禁用），不许统一成"缺凭证"。
 
+TS 侧的落点（2026-11-18 补齐）：`packages/api/src/dispatch.ts` 的数据面入口
+先判「有没有凭证」（`AUTH_ENABLED=true` 且无凭证且路径不在 `AUTH_WHITELIST` → 401），
+**再**判「能不能用这个源」（`gate/sourceAccessVerdict`）。两件事分开判，别把
+「没带凭证」与「套餐不含该源」混成一个 403——一个是调用方的问题，一个是账号的问题。
+静态 env 键算「有凭证但匿名」：它不归属任何账号，所以只过第一道、走免费套餐那一档。
+
 ## 4. 中间件链（顺序本身就是契约）
 
 顺序由 `middleware.Def.Order` 声明、`sort.SliceStable` 装配，不靠 import 顺序。

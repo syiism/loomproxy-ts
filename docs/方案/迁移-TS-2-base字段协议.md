@@ -345,7 +345,14 @@ book_ident, chapter_ident, media_type, result_count, content_withheld, **plugin_
 | 部署历史 | `RETIRED_SOURCES`（逗号分隔，启动期清理存量行） |
 
 `.env` 加载两条语义必须保留：**已存在的真实环境变量优先**（不覆盖）、值两端引号被剥离。
-`AUTH_ENABLED` 读不出来的当年症状是"以为开了鉴权"——所以非法值要出声（`badEnvNotes`）。
+`AUTH_ENABLED` 读不出来的当年症状是"以为开了鉴权"——所以非法值要出声（`badEnvNotes`）；
+**读了却不用**是同一个病的另一半：`true` 时数据面必须真的 401（白名单路径除外），
+`false` 时也不是"全放行"——匿名仍要过免费套餐（`code='free'` 的套餐里有没有该源那一行）。
+
+匿名档与"新接入的源"：内置套餐的每源默认档是 `free=100 / vip=1000 / admin=-1`
+（`packages/store/src/seed.ts` 的 `BUILTIN_PLAN_LIMIT_DEFAULTS`，与 Go 同名表同值）。
+**只在新接入源时补授权行**（装配期按 `data_sources` 的新增集合差），已存在的源哪怕管理员
+删掉了授权也不复活——"删了又自己回来"是面板上最说不清的一格。
 
 ## 10. 注册与启动时序（源能"自注册"的机制）
 
