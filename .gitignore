@@ -8,3 +8,6 @@ dist/
 # 打包产物：plugins/<code>/<version>/ 由 tools/pack-plugin.mjs 生成（保留 .gitkeep）
 plugins/*/
 !plugins/.gitkeep
+
+# 项目统一使用 pnpm，忽略 npm 生成的 lockfile
+package-lock.json
