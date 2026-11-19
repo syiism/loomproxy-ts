@@ -110,3 +110,6 @@ PLUGIN_DIR=plugins node apps/server/src/main.ts          # ③ 起服务 → cur
 - 错误文案外发前必须脱敏：`?query` 整段替换（`scrubQuery`）、带内 `message` 走 `sanitizeUpstreamMsg`。
 - 定时器/监听器一律登记到 `ShutdownRegistry`（SIGTERM 时统一收）。
 - 注释写"为什么"，不写"做了什么"；踩过一次的坑写成用例或 `check-layers` 规则，不要只写进注释。
+- **代码与文档同步更新**：改动行为、模块职责或实现位置时，同一批提交必须回写对应文档
+  （文件头注释、`README.md`、`WORKLOG.md`、`docs/方案/迁移-TS-{1..4}.md`）——
+  设计正本与代码冲突时以代码事实为准修正双方（见开头总则），不允许只改一边留下漂移。
