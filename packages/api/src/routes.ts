@@ -2,6 +2,7 @@
 // 这样"加一组端点"只碰对应文件，不在一个 1500 行的文件里找插入点。
 import type { FastifyInstance } from 'fastify'
 import type { Config } from '@loomproxy/kernel'
+import type { Ledger } from '@loomproxy/gate'
 import type { DataSourceStore } from '@loomproxy/store'
 import type { SourceHost } from '@loomproxy/source-host'
 import { registerAdminRoutes } from './routes-admin.ts'
@@ -13,6 +14,8 @@ export type RouteDeps = {
   config: Config
   host: SourceHost
   dataSources: DataSourceStore
+  /** 内存账本（与 dispatch 同一个实例）：总览的「扣减冷却」读数从这里取 */
+  ledger?: Ledger
   users?: ApiStores['users']
   roles?: ApiStores['roles']
   plans?: ApiStores['plans']
@@ -56,6 +59,6 @@ export function registerControlRoutes(app: FastifyInstance, deps: RouteDeps): vo
   }
   registerSourceRoutes(app, { config: deps.config, host: deps.host, dataSources: deps.dataSources, stores })
   registerAuthRoutes(app, { config: deps.config, stores })
-  registerAdminRoutes(app, { config: deps.config, stores, dataSources: deps.dataSources, host: deps.host })
+  registerAdminRoutes(app, { config: deps.config, stores, dataSources: deps.dataSources, host: deps.host, ...(deps.ledger ? { ledger: deps.ledger } : {}) })
 }
 

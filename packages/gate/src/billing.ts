@@ -5,9 +5,14 @@ import { paramString } from '@loomproxy/contract'
 
 export type CostSpec = { cost: number; status: number } | undefined
 
+/** 去重冷却的运行时读数（面板总览「扣减冷却 挡/在记」的数据源） */
+export type DedupeStats = { enabled: boolean; skipped: number; tracked: number }
+
 export class Ledger {
   private readonly used = new Map<string, number>()
   private readonly lastCharge = new Map<string, number>()
+  /** 窗口期内被去重挡下的扣减次数（进程累计） */
+  private dedupeSkipped = 0
   private readonly now: () => number
 
   constructor(now: () => number = Date.now) {
@@ -35,7 +40,10 @@ export class Ledger {
     const t = this.now()
     if (windowMs > 0) {
       const last = this.lastCharge.get(dedupeKey)
-      if (last !== undefined && t - last < windowMs) return false
+      if (last !== undefined && t - last < windowMs) {
+        this.dedupeSkipped++
+        return false
+      }
       this.lastCharge.set(dedupeKey, t)
     }
     const k = this.key(user, source)
@@ -43,9 +51,15 @@ export class Ledger {
     return true
   }
 
+  /** 去重冷却读数：enabled 由调用方按配置传入；skipped=挡下次数，tracked=在记键数 */
+  dedupeStats(enabled: boolean): DedupeStats {
+    return { enabled, skipped: this.dedupeSkipped, tracked: this.lastCharge.size }
+  }
+
   reset(): void {
     this.used.clear()
     this.lastCharge.clear()
+    this.dedupeSkipped = 0
   }
 }
 

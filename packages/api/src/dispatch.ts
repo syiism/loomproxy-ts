@@ -65,7 +65,28 @@ function sanitizeMessage(msg: string): string {
 }
 
 /** 同内容去重窗口（内存态；跨重启会重复扣一次，与 Go 版同取舍） */
-const dedupeWindow = new Map<string, number>()
+class DedupeWindow {
+  private readonly entries = new Map<string, number>()
+  /** 窗口期内被挡下的扣减次数（进程累计，供面板「扣减冷却 挡/在记」读数） */
+  private skippedCount = 0
+
+  shouldCharge(key: string, nowMs: number, windowMs: number): boolean {
+    if (windowMs <= 0) return true
+    const last = this.entries.get(key)
+    if (last !== undefined && nowMs - last < windowMs) {
+      this.skippedCount++
+      return false
+    }
+    this.entries.set(key, nowMs)
+    return true
+  }
+
+  stats(enabled: boolean) {
+    return { enabled, skipped: this.skippedCount, tracked: this.entries.size }
+  }
+}
+
+const dedupeWindow = new DedupeWindow()
 
 export function createDispatcher(deps: DispatchDeps) {
 
@@ -286,10 +307,7 @@ export function createDispatcher(deps: DispatchDeps) {
       // 计费入账：成功且非带内失败才扣（去重窗口挡住"客户端超时重试"重复扣费）
       if (user && quota && cost > 0 && !subject.in_band_error) {
         const k = `${user.id}:${source}:${action}:${contentKeyOf(action, params)}`
-        const last = dedupeWindow.get(k)
-        const now = Date.now()
-        if (!last || now - last >= deps.config.billingDedupeSec * 1000) {
-          dedupeWindow.set(k, now)
+        if (dedupeWindow.shouldCharge(k, Date.now(), deps.config.billingDedupeSec * 1000)) {
           quota.appendUsage({ user_id: user.id, username: user.username, group_code: source, action, cost })
         }
       } else if (identity.userId !== undefined) {
@@ -303,4 +321,11 @@ export function createDispatcher(deps: DispatchDeps) {
       deps.host.end(source)
     }
   }
+}
+
+/** 进程级去重冷却读数（面板总览用）：DB 路径与内存账本路径各记各的，相加后展示 */
+export function dedupeReadout(ledger: Ledger, enabled: boolean) {
+  const a = ledger.dedupeStats(enabled)
+  const b = dedupeWindow.stats(enabled)
+  return { enabled, skipped: a.skipped + b.skipped, tracked: a.tracked + b.tracked }
 }

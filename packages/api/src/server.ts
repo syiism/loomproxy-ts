@@ -78,10 +78,15 @@ export function buildServer(deps: ApiDeps): FastifyInstance {
     deps.callLogs.append(toCallLogRow(meta, reply.statusCode, new Date().toISOString()))
   })
 
+  // ledger/limiter 只 new 一次：控制面读数与数据面扣减必须看同一本账
+  const ledger = deps.ledger ?? new Ledger()
+  const limiter = deps.limiter ?? new RateLimiter()
+
   registerControlRoutes(app, {
     config: deps.config,
     host: deps.host,
     dataSources: deps.dataSources,
+    ledger,
     ...(deps.users ? { users: deps.users } : {}),
     ...(deps.roles ? { roles: deps.roles } : {}),
     ...(deps.plans ? { plans: deps.plans } : {}),
@@ -119,8 +124,8 @@ export function buildServer(deps: ApiDeps): FastifyInstance {
     host: deps.host,
     dataSources: deps.dataSources,
     settings: deps.settings,
-    ledger: deps.ledger ?? new Ledger(),
-    limiter: deps.limiter ?? new RateLimiter(),
+    ledger,
+    limiter,
     // 匿名（免费档）能不能用某个源 = 内置 `free` 套餐里有没有那一行（限额即授权）。
     // 过去这里是"全放行"，于是匿名不受任何套餐约束；读不到套餐/额度时**失败关闭**。
     freePlanAllows: (source: string) => {

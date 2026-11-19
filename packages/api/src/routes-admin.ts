@@ -13,8 +13,10 @@ import { resetAttempts, snapshot } from './login-limiter.ts'
 import type { DataSourceStore } from '@loomproxy/store'
 import type { SourceHost } from '@loomproxy/source-host'
 import { notWired, type ApiStores } from './stores.ts'
+import { dedupeReadout } from './dispatch.ts'
+import { Ledger, type DedupeStats } from '@loomproxy/gate'
 
-type Deps = { config: Config; stores: ApiStores; dataSources?: DataSourceStore; host?: SourceHost }
+type Deps = { config: Config; stores: ApiStores; dataSources?: DataSourceStore; host?: SourceHost; ledger?: Ledger }
 
 async function requireAdmin(req: FastifyRequest, reply: FastifyReply, deps: Deps) {
   const id = await resolveIdentity(req, deps.config, {
@@ -91,7 +93,8 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
       vip_count: 0,
       normal_count: Math.max(0, s.total - s.admin),
       today_new: 0,
-      billing_dedupe: 0,
+      // 扣减冷却的真实读数：enabled 取配置（BILLING_DEDUPE_SEC），挡/在记取运行时内存态
+      billing_dedupe: dedupeReadout(deps.ledger ?? new Ledger(), config.billingDedupeSec > 0),
     })
   })
 
