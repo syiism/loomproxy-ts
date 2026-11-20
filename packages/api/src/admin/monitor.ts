@@ -3,9 +3,9 @@
 import type { FastifyInstance } from 'fastify'
 import { MEDIA, RANK_BOARDS, fail, isValidMedia, isValidSubjectDim, mediaLabel, ok, type RankBoard, type SubjectCoverageRow, type SubjectItem } from '@loomproxy/contract'
 import { clampPage, clampPageSize } from '@loomproxy/kernel'
-import { resolveIdentity } from './auth.ts'
-import { displayName, MONITOR_STARTED_AT, rankPublicSet, windowSince } from './admin-shared.ts'
-import type { AdminContext } from './admin-shared.ts'
+import { resolveIdentity } from '../auth.ts'
+import { displayName, MONITOR_STARTED_AT, rankPublicSet, windowSince } from './shared.ts'
+import type { AdminContext } from './shared.ts'
 
 export function registerMonitorRoutes(app: FastifyInstance, deps: AdminContext): void {
   const { config, stores, guard, unavailable } = deps

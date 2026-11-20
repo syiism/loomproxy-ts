@@ -2,8 +2,8 @@
 
 import type { FastifyInstance } from 'fastify'
 import { fail, ok } from '@loomproxy/contract'
-import { resolveIdentity } from './auth.ts'
-import type { AdminContext } from './admin-shared.ts'
+import { resolveIdentity } from '../auth.ts'
+import type { AdminContext } from './shared.ts'
 
 export function registerSettingsRoutes(app: FastifyInstance, deps: AdminContext): void {
   const { config, stores, guard, unavailable } = deps

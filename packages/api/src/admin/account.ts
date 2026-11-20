@@ -3,11 +3,11 @@
 import type { FastifyInstance } from 'fastify'
 import { fail, ok, normalizeUsername, validUsername } from '@loomproxy/contract'
 import { clampPage, clampPageSize, createClock } from '@loomproxy/kernel'
-import { resolveIdentity } from './auth.ts'
-import { resetAttempts, snapshot } from './login-limiter.ts'
-import { dedupeReadout } from './dispatch.ts'
+import { resolveIdentity } from '../auth.ts'
+import { resetAttempts, snapshot } from '../login-limiter.ts'
+import { dedupeReadout } from '../dispatch.ts'
 import { Ledger } from '@loomproxy/gate'
-import type { AdminContext } from './admin-shared.ts'
+import type { AdminContext } from './shared.ts'
 
 export function registerAccountRoutes(app: FastifyInstance, deps: AdminContext): void {
   const { config, stores, guard, unavailable } = deps

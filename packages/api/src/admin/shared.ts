@@ -3,10 +3,10 @@ import type { FastifyReply, FastifyRequest } from 'fastify'
 import { fail, type RankBoard } from '@loomproxy/contract'
 import { createClock, type TtlCache } from '@loomproxy/kernel'
 import type { Config } from '@loomproxy/kernel'
-import { resolveIdentity } from './auth.ts'
+import { resolveIdentity } from '../auth.ts'
 import type { DataSourceStore } from '@loomproxy/store'
 import type { SourceHost } from '@loomproxy/source-host'
-import type { ApiStores } from './stores.ts'
+import type { ApiStores } from '../stores.ts'
 import type { Ledger } from '@loomproxy/gate'
 
 export type Deps = { config: Config; stores: ApiStores; dataSources?: DataSourceStore; host?: SourceHost; ledger?: Ledger }

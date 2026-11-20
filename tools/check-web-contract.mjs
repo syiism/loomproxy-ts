@@ -10,6 +10,17 @@ const ROOT = new URL('..', import.meta.url).pathname
 const WEB_API = join(ROOT, 'web', 'src', 'api', 'index.js')
 const ROUTE_DIR = join(ROOT, 'packages', 'api', 'src')
 
+// 递归收集 src/ 下所有 .ts（路由可能在子目录，如 src/admin/），不依赖文件名前缀。
+function collectTs(dir) {
+  const out = []
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name)
+    if (e.isDirectory()) out.push(...collectTs(p))
+    else if (e.name.endsWith('.ts')) out.push(p)
+  }
+  return out
+}
+
 // ---- 后端：抓 app.<method>('<path>' 与 stubs 数组里的 [method, path] ----
 const backend = new Map() // path -> Set(method)
 const addRoute = (method, path) => {
@@ -18,8 +29,8 @@ const addRoute = (method, path) => {
   set.add(method.toLowerCase())
   backend.set(norm, set)
 }
-for (const f of readdirSync(ROUTE_DIR).filter((n) => n.startsWith('routes-') && n.endsWith('.ts'))) {
-  const src = readFileSync(join(ROUTE_DIR, f), 'utf8')
+for (const f of collectTs(ROUTE_DIR)) {
+  const src = readFileSync(f, 'utf8')
   for (const m of src.matchAll(/app\.(get|post|put|patch|delete)\(\s*[`'"]([^`'"]+)[`'"]/g)) {
     // 模板字面量里的 ${op} 是**循环变量的取值**（/admin/sources/:code/${op}），
     // 它匹配的是任意字面段（reload/rollback），不是参数名 —— 用 * 表示

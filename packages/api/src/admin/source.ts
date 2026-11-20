@@ -2,8 +2,8 @@
 
 import type { FastifyInstance } from 'fastify'
 import { fail, ok } from '@loomproxy/contract'
-import { rankPublicSet, setRankPublic } from './admin-shared.ts'
-import type { AdminContext } from './admin-shared.ts'
+import { rankPublicSet, setRankPublic } from './shared.ts'
+import type { AdminContext } from './shared.ts'
 
 export function registerSourceRoutes(app: FastifyInstance, deps: AdminContext): void {
   const { config, stores, guard, unavailable } = deps

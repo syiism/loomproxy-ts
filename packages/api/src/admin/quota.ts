@@ -3,9 +3,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { fail, ok } from '@loomproxy/contract'
 import { clampPage, clampPageSize } from '@loomproxy/kernel'
-import { resolveIdentity } from './auth.ts'
-import { nextResetLabel } from './admin-shared.ts'
-import type { AdminContext } from './admin-shared.ts'
+import { resolveIdentity } from '../auth.ts'
+import { nextResetLabel } from './shared.ts'
+import type { AdminContext } from './shared.ts'
 
 export function registerQuotaRoutes(app: FastifyInstance, deps: AdminContext): void {
   const { config, stores, guard, unavailable } = deps
