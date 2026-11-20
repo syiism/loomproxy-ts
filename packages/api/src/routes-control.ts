@@ -7,7 +7,9 @@ import { clampPage, clampPageSize } from '@loomproxy/kernel'
 import type { Config } from '@loomproxy/kernel'
 import type { DataSourceStore } from '@loomproxy/store'
 import type { SourceHost } from '@loomproxy/source-host'
+import { createClock } from '@loomproxy/kernel'
 import { resolveIdentity } from './auth.ts'
+import { Issue, VerifyError, verifyConfig, type VerifyDeps } from './verify.ts'
 import { declaredParams } from './params.ts'
 import type { ApiStores } from './stores.ts'
 
@@ -114,19 +116,41 @@ export function registerControlRoutes(app: FastifyInstance, deps: ControlDeps): 
     return { code: 0, msg: 'ok', count: data.length, data }
   })
 
-  // 验证码场景：由系统设置 verify_code_scenes 决定（逗号分隔；本部署尚未接短信/邮件通道，
-  // 所以发码端点回 501，但「哪些场景要验证码」仍按设置下发——面板据此决定是否显示输入框）
-  const SUPPORTED_SCENES = ['register', 'forgot_password']
+  // 验证码：/verify/config 给前端决定是否渲染输入框；/verify/send 发码。
+  // 口径与 Go 的 handlers/verify/router.go 一致（错误码、状态码映射）。
+  const verifyStore = deps.stores?.verification
+  const settings = deps.stores?.settings
   app.get('/verify/config', async () => {
-    const raw = (deps.stores?.settings?.get('verify_code_scenes') ?? '').trim()
-    const scenes = raw
-      .split(',')
-      .map((s) => s.trim())
-      .filter((s) => SUPPORTED_SCENES.includes(s))
-    return ok({ scenes, send_enabled: false })
+    if (!settings) return ok({ scenes: [], ttl: 600, send_interval: 60 })
+    return ok(verifyConfig(settings))
   })
-  app.post('/verify/send', async (_req, reply) => {
-    reply.code(501).send(fail(config.errorCode, '本部署未开启验证码通道（验证码需短信/邮件服务）'))
+  app.post('/verify/send', async (req, reply) => {
+    if (!verifyStore || !settings) {
+      reply.code(501).send(fail(config.errorCode, '本部署未开启验证码通道（验证码存储未接）'))
+      return
+    }
+    const b = (req.body ?? {}) as { scene?: string; target?: string }
+    if (!b.scene || !b.target) {
+      reply.code(400).send(fail(config.errorCode, '参数错误: 需要 scene 与 target'))
+      return
+    }
+    const vd: VerifyDeps = {
+      settings,
+      store: verifyStore,
+      dayStartIso: new Date(createClock(config.tzOffsetHours).startOfDay()).toISOString(),
+    }
+    try {
+      const expires = await Issue(req.ip, b.scene, b.target, vd)
+      return ok({ message: '验证码已发送，请查收', expires_at: expires })
+    } catch (e) {
+      const ve = e as VerifyError
+      const kind = ve.kind ?? ''
+      const status = ['too_frequent', 'daily_limit'].includes(kind) ? 429
+        : kind === 'register_closed' ? 403
+        : ['scene_unknown', 'scene_disabled', 'target_invalid', 'bad_request'].includes(kind) ? 400
+        : kind === 'storage' ? 503 : 400
+      reply.code(status).send(fail(config.errorCode, ve instanceof Error ? ve.message : '验证码发送失败，请稍后再试'))
+    }
   })
 
   app.get('/announcement', async () => ok({ content: deps.stores?.settings?.get('announcement') ?? '', maintenance: false }))

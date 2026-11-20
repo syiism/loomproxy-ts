@@ -18,6 +18,7 @@ import type {
   SessionStore,
   SettingsStore,
   DbUsers,
+  VerificationStore,
 } from '@loomproxy/store'
 
 export type ApiStores = {
@@ -39,6 +40,8 @@ export type ApiStores = {
   pools?: { statusAll(): unknown[] }
   quotaExtra?: DbQuotaExtra
   sourceGroups?: DbSourceGroups
+  /** 验证码存储：未接时 /verify/* 回 501，注册/找回密码跳过验证码校验 */
+  verification?: VerificationStore
 }
 
 /** 未接的后端域：回 501 + 一句人能照着做的话（面板会把 msg 原样 toast 出来） */

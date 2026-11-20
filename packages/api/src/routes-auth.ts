@@ -5,9 +5,37 @@ import { fail, ok } from '@loomproxy/contract'
 import type { Config } from '@loomproxy/kernel'
 import { resolveIdentity, issueToken, tokenFromRequest, verifyToken } from './auth.ts'
 import { lockedUntil, recordAttempt } from './login-limiter.ts'
+import { createClock } from '@loomproxy/kernel'
+import { Check, Consume, sceneEnabledFor, VERIFY_ERR, type VerifyDeps } from './verify.ts'
 import { notWired, type ApiStores } from './stores.ts'
 
 type Deps = { config: Config; stores: ApiStores }
+
+/** 验证码校验依赖：settings/store 缺任一则无法校验（场景启用时应视为失败关闭） */
+function verifyDeps(deps: Deps): VerifyDeps | undefined {
+  const settings = deps.stores.settings, store = deps.stores.verification
+  if (!settings || !store) return undefined
+  return {
+    settings,
+    store,
+    dayStartIso: new Date(createClock(deps.config.tzOffsetHours).startOfDay()).toISOString(),
+  }
+}
+
+/** 场景启用时校验验证码，返回可消费的行 id；未启用返回 undefined（不校验） */
+function checkVerify(
+  deps: Deps, scene: string, target: string, code: string | undefined,
+): { id: number } | { error: string } | undefined {
+  const settings = deps.stores.settings
+  if (!settings || !sceneEnabledFor(settings, scene)) return undefined // 场景未启用：不校验
+  const vd = verifyDeps(deps)
+  if (!vd) return { error: '请先获取验证码' } // 场景启用但存储未接：失败关闭
+  try {
+    return { id: Check(scene, target, code ?? '', vd) }
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : VERIFY_ERR.notFound().message }
+  }
+}
 
 async function identityOf(req: FastifyRequest, deps: Deps) {
   return resolveIdentity(req, deps.config, {
@@ -202,7 +230,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: Deps): void {
       reply.code(403).send(fail(config.errorCode, '注册已关闭：账号由管理员在「用户」页创建'))
       return
     }
-    const b = (req.body ?? {}) as { username?: string; password?: string; email?: string; nickname?: string }
+    const b = (req.body ?? {}) as { username?: string; password?: string; email?: string; nickname?: string; verification_code?: string }
     const username = (b.username ?? '').trim().toLowerCase()
     const email = (b.email ?? '').trim().toLowerCase()
     if (!username || !b.password) {
@@ -211,6 +239,12 @@ export function registerAuthRoutes(app: FastifyInstance, deps: Deps): void {
     }
     if (email && !emailAllowed(email, settings)) {
       reply.code(400).send(fail(config.errorCode, '该邮箱域名不允许注册'))
+      return
+    }
+    // 邮箱域名闸之后校验验证码（被拒的域名不必先烧码）；Check 不消费，注册成功后才 Consume
+    const vc = email ? checkVerify(deps, 'register', email, b.verification_code) : undefined
+    if (vc && 'error' in vc) {
+      reply.code(400).send(fail(config.errorCode, vc.error))
       return
     }
     if (users.byUsernameOrEmail(username) || (email && users.byUsernameOrEmail(email))) {
@@ -236,12 +270,58 @@ export function registerAuthRoutes(app: FastifyInstance, deps: Deps): void {
       reply.code(400).send(fail(config.errorCode, e instanceof Error ? e.message : '注册失败'))
       return
     }
+    // 注册成功后消费验证码；并发被占用则注册仍算成功（与 Go 同口径）
+    if (vc && 'id' in vc) {
+      const vd = verifyDeps(deps)
+      if (vd && !Consume(vc.id, vd)) console.error(`[verify] 注册验证码消费失败（可能并发复用）row_id=${vc.id}`)
+    }
     // 面板注册后直接 setToken(data.token) —— 与登录同形状
     const { token, expires_at, jti } = issueToken({ id: created.id, username: created.username }, config)
     stores.sessions?.create(created.id, jti, expires_at, req.ip, String(req.headers['user-agent'] ?? ''))
     return ok({ token, expires_at, user: created })
   })
-  app.post('/auth/forgot-password', async (_req, reply) => unavailable(reply, '找回密码（需邮件/短信通道）'))
+  app.post('/auth/forgot-password', async (req, reply) => {
+    const settings = stores.settings
+    const users = stores.users
+    if (!users) return unavailable(reply, '账号存储未接')
+    const b = (req.body ?? {}) as {
+      username?: string; email?: string; new_password?: string; verification_code?: string
+    }
+    const username = (b.username ?? '').trim().toLowerCase()
+    const email = (b.email ?? '').trim().toLowerCase()
+    if (!username || !email || !b.new_password) {
+      reply.code(400).send(fail(config.errorCode, '缺少用户名、邮箱或新密码'))
+      return
+    }
+    // 账号匹配在前：不存在/邮箱不符统一回同一句，验证码不被无谓消耗（与 Go 同口径）
+    const row = users.byUsernameOrEmail(username)
+    if (!row || row.email !== email) {
+      reply.code(400).send(fail(config.errorCode, '用户名与邮箱不匹配'))
+      return
+    }
+    if (row.status !== 1) {
+      reply.code(403).send(fail(config.errorCode, '账号已被禁用'))
+      return
+    }
+    const vc = checkVerify(deps, 'forgot_password', email, b.verification_code)
+    if (vc && 'error' in vc) {
+      reply.code(400).send(fail(config.errorCode, vc.error))
+      return
+    }
+    users.setPassword(row.id, b.new_password)
+    // 旧密码可能泄露：吊销全部旧会话（与 Go 同口径）
+    stores.sessions?.revokeOthers(row.id, '')
+    if (vc && 'id' in vc) {
+      const vd = verifyDeps(deps)
+      if (vd) Consume(vc.id, vd)
+    }
+    // 找回后自动登录（与 Go 一致）
+    const u = users.byId(row.id)
+    if (!u) return unavailable(reply, '账号存储未接')
+    const { token, expires_at, jti } = issueToken({ id: u.id, username: u.username }, config)
+    stores.sessions?.create(u.id, jti, expires_at, req.ip, String(req.headers['user-agent'] ?? ''))
+    return ok({ token, expires_at, user: u })
+  })
   app.post('/auth/quota-cycle', async (_req, reply) => unavailable(reply, '额度周期切换（属额度域）'))
   app.put('/auth/display-alias', async (_req, reply) => unavailable(reply, '套餐/角色显示别名'))
 

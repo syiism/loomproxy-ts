@@ -276,6 +276,22 @@ CREATE INDEX IF NOT EXISTS idx_logs_source ON api_call_logs(source, action);
 CREATE INDEX IF NOT EXISTS idx_logs_plugin ON api_call_logs(plugin_version);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_keys_user ON api_keys(user_id);
+
+-- 验证码：发码(Issue)→校验(Check)→业务成功后消费(Consume)。与 Go verification_codes 表逐列对齐。
+CREATE TABLE IF NOT EXISTS verification_codes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scene TEXT NOT NULL,
+  target TEXT NOT NULL,
+  code_hash TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  ip TEXT NOT NULL DEFAULT '',
+  expires_at TEXT NOT NULL,
+  consumed_at TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_vc_scene_target ON verification_codes(scene, target);
+CREATE INDEX IF NOT EXISTS idx_vc_target_time ON verification_codes(target, created_at);
+CREATE INDEX IF NOT EXISTS idx_vc_ip_time ON verification_codes(ip, created_at);
 `
 
 export function nowIso(): string {

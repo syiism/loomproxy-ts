@@ -24,6 +24,7 @@ import {
   DbSourceConfigs,
   DbSettings,
   DbUsers,
+  DbVerification,
   SqliteDb,
   MysqlDb,
   type Database,
@@ -64,6 +65,7 @@ export type Composed = {
   pools: ReturnType<typeof createPoolRuntime>
   quotaExtra: DbQuotaExtra
   sourceGroups: DbSourceGroups
+  verification: DbVerification
 }
 
 /** 内置角色：面板与 access 判定都按 code 读（admin/vip/user） */
@@ -122,6 +124,7 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
   const schedules = new DbSchedules(db)
   const quotaExtra = new DbQuotaExtra(db, quota)
   const sourceGroups = new DbSourceGroups(db, quota)
+  const verification = new DbVerification(db)
 
   // ---- 播种：角色 → 默认套餐 → 管理员 ----
   for (const r of BUILTIN_ROLES) {
@@ -264,6 +267,7 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
     pools,
     quotaExtra,
     sourceGroups,
+    verification,
   })
-  return { config, app, db, host, registry, settings, dataSources, users, roles, plans, sessions, apiKeys, callLogs, quota, sourceConfigs, blockedIPs, devices, nameCache, schedules, kv, pools, quotaExtra, sourceGroups }
+  return { config, app, db, host, registry, settings, dataSources, users, roles, plans, sessions, apiKeys, callLogs, quota, sourceConfigs, blockedIPs, devices, nameCache, schedules, kv, pools, quotaExtra, sourceGroups, verification }
 }

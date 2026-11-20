@@ -53,6 +53,7 @@ export type ApiDeps = {
   pools?: { statusAll(): unknown[]; get(name: string): Pool | undefined }
   quotaExtra?: DbQuotaExtra
   sourceGroups?: DbSourceGroups
+  verification?: import('@loomproxy/store').VerificationStore
   ledger?: Ledger
   limiter?: RateLimiter
 }
@@ -117,6 +118,7 @@ export function buildServer(deps: ApiDeps): FastifyInstance {
     ...(deps.schedules ? { schedules: deps.schedules } : {}),
     ...(deps.kv ? { kv: deps.kv } : {}),
     ...(deps.pools ? { pools: deps.pools } : {}),
+    ...(deps.verification ? { verification: deps.verification } : {}),
   })
   const spaFallback = registerWebRoutes(app, { webDir: deps.config.webDist, logger: deps.logger })
 
