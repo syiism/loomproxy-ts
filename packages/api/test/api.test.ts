@@ -197,6 +197,21 @@ test('数据面是裸对象：search 打标 source/kind，content 原样返回',
   }
 })
 
+test('/admin/stats 的 today_new 来自今日创建的用户（不是硬编码 0）', async () => {
+  const { app, root } = await makeApp()
+  try {
+    const res = await app.inject({ method: 'GET', url: '/admin/stats', headers: { authorization: `Bearer ${adminToken()}` } })
+    assert.equal(res.statusCode, 200)
+    const d = (res.json() as { data: Record<string, unknown> }).data
+    assert.equal(typeof d['today_new'], 'number')
+    // makeApp 里 admin/alice 都是刚刚（今天）创建的，今日新增至少 2
+    assert.ok(Number(d['today_new']) >= 2, `today_new=${d['today_new']}，应为今日新建用户数`)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('/admin/monitor 回完整形状（面板 overview/items/recent），不是 {stats,total}', async () => {
   const { app, root } = await makeApp()
   try {

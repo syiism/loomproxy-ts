@@ -254,6 +254,11 @@ export class DbUsers implements UserStore {
     }
   }
 
+  /** 今日新增用户数：created_at >= 今日 0 点（起点由调用方按 kernel/clock 算好） */
+  todayNew(sinceIso: string): number {
+    return this.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM users WHERE created_at >= ?', sinceIso)?.n ?? 0
+  }
+
   list(q: { page: number; pageSize: number; keyword?: string; status?: string; role?: string }): { total: number; list: UserView[] } {
     const where: string[] = []
     const params: SqlValue[] = []

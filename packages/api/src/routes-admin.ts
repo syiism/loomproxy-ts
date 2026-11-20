@@ -96,7 +96,10 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
       // 本 TS 部署还没有 VIP 角色语义（角色由管理员在「角色」页建）
       vip_count: 0,
       normal_count: Math.max(0, s.total - s.admin),
-      today_new: 0,
+      // 今日新增：今日 0 点（平台时区，kernel/clock 单一事实源）起创建的用户数
+      today_new: (stores.users as unknown as { todayNew?: (since: string) => number })?.todayNew?.(
+        new Date(createClock(config.tzOffsetHours).startOfDay()).toISOString(),
+      ) ?? 0,
       // 扣减冷却的真实读数：enabled 取配置（BILLING_DEDUPE_SEC），挡/在记取运行时内存态
       billing_dedupe: dedupeReadout(deps.ledger ?? new Ledger(), config.billingDedupeSec > 0),
     })
