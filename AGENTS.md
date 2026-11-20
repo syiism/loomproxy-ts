@@ -13,10 +13,11 @@
    `omitempty` → `undefined`（不是 `null`）、字段名逐字照抄。改任何一条都算破坏前端（① §1）。
 4. **Node strip-only 语法**：不用 `enum` / `namespace` / 构造器参数属性 / 装饰器。
    类型导入一律 `import type`（`verbatimModuleSyntax`）。
-5. **源包只做试点**：目前有两个——`packages/sources/fq_novel`（协议层复用外部实现）与
-   `packages/sources/sq_novel`（Legado JS 源**转写**：算法/常量对齐参考实现，用黄金值用例钉住）。
-   新源照这个结构（一源一包、`manifest.json` 是唯一声明位、映射逻辑进 `src/normalize.ts` 且可单测、
-   宿主用 `packages/source-host/test/fixtures/*` 夹具验证）。
+5. **源码即插件**：14 个源包直接住在 `plugins/<code>/<version>/`（无打包步骤、无 `packages/sources/`），
+   一码一 `deps/`（SDK 源码 + 第三方 JS 依赖，多版本共享）。新源照这个结构（`manifest.json` 是唯一声明位、
+   映射逻辑进 `src/normalize.ts` 且可单测、宿主用 `packages/source-host/test/fixtures/*` 夹具验证）。
+   **不许在 plugins/ 下建软链**（拷走就断）；SDK 必须走相对 deps 路径，第三方纯 JS 包以真实文件放
+   `<code>/node_modules/`；依赖变更跑 `pnpm run sync:plugins`。
    **完整编写范式见 `docs/方案/源插件编写范式.md`**（目录结构/manifest 字段表/三种转写形态/测试与上线清单）。
    **协议层复用外部参考实现**（`/home/muyang/work/novels/fanq`，见 README「外部依赖」）时，
    不要顺手把签名/加密/会话池抄进本仓——那是最容易与上游漂移的一块。
@@ -41,14 +42,14 @@ pnpm run check     # 分层 + tsc + 面板构建 + 全部用例
 | `gate` | 六档访问判定顺序、双维限流、去重窗口 |
 | `source-host` | 扫描/reload/rollback/drain/卸载 + 四种坏插件各留记录且不拖垮别人 |
 | `api` | 信封形状、参数注入规则、必填参数 400、未知源 404、插件管理要管理员 |
-| `packages/sources/*` | 映射纯函数用例（不连网）+ `node tools/plugin-run.mjs <code> <action>` 实网跑通一个动作 |
+| `plugins/<code>/<version>` | 映射纯函数用例（不连网）+ `node tools/plugin-run.mjs <code> <action>` 实网跑通一个动作 |
 | `apps/server` | `compose()` 起得来：无插件目录也能起，有插件立即可派发 |
 
 ## 4. 插件（源包）的三步跑通
 
 ```bash
 node tools/plugin-run.mjs fq_novel search query=三体     # ① 单插件直跑（真上游）
-node tools/pack-plugin.mjs fq_novel                      # ② 打包成 plugins/<code>/<version>/
+node tools/sync-plugin-deps.mjs fq_novel                 # ② 修依赖/重建 deps 与 node_modules（无打包产物）
 PLUGIN_DIR=plugins node apps/server/src/main.ts          # ③ 起服务 → curl /datasources、/fq_novel/search
 ```
 

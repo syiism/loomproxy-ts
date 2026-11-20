@@ -42,6 +42,11 @@ B 的故障面（事件循环阻塞）与热更新的需求共用同一个边界
 
 ## 3. 插件包形态
 
+> **当前实现口径（方案 B，2026-11-20 收敛）**：下面这份 `package.json` + `dist/index.js` +
+> peer 单例的骨架是迁移期**草案**，已被「源码即插件」取代，保留在此只为说明设计取舍的来龙去脉。
+> 实际布局：`plugins/<code>/{deps/{contract,source-kit}（SDK 源码、相对 import）, node_modules/（真实 JS 文件、无软链）, <version>/{manifest.json, index.mjs, src/, test/, 可选 protocol/}}`。
+> 现行目录结构、依赖硬规则与上线步骤以 `docs/方案/源插件编写范式.md` §1/§9 为准。
+
 ```text
 plugins/
   fq_novel/
@@ -77,9 +82,10 @@ plugins/
 
 三条必须写死的规则：
 
-1. **`@loomproxy/source-kit` 只能是 peer + 由 host 提供单例**。插件自带一份 = 两个 `UpstreamError` 类
-   → `instanceof` 判断全部失效（Go 版靠同一个包类型天然成立）。host 用 import map / `NODE_PATH` /
-   显式 `module.createRequire` 指到 host 的副本；插件 `dependencies` 里不许出现它。
+1. **`@loomproxy/source-kit` 必须只有一份类身份**（草案写的是 peer + host 单例，理由：插件自带一份 =
+   两个 `UpstreamError` 类 → `instanceof` 全部失效）。方案 B 的落地方式改为：SDK 源码副本放在
+   `<code>/deps/`，版本目录用相对路径 import，宿主通过自己的 `@loomproxy/source-kit` 传入 handler
+   所需的门面；**不许**在 `plugins/` 下建软链，也不许在版本目录里写裸 `@loomproxy/*` import。
 2. **`sdk_version` 语义化**：host 用 semver 校验；不兼容**拒绝加载并保留老代**，不许"尽力加载"。
 3. **manifest 是声明位的唯一来源**，`index.js` 里再声明一遍 = 两份事实（Go 版的 `SourceMeta` 就是
    注册期唯一口子，这个性质要保住）。`defineSource()` 只接 handler 工厂，不再接元数据。
@@ -103,7 +109,7 @@ reload(code):
 所以第 5 步的替换只影响"替换之后新进来的请求"。这是整个方案里唯一不能妥协的实现细节。
 
 **回滚**：`POST /admin/sources/:code/rollback` → 把"当前版本指针"指回上一代目录，重跑 1–5 步。
-版本目录保留 N=3（可配），`rollback` 不需要重新打包（产物本来就在盘上）。
+版本目录保留 N=3（可配），`rollback` 不需要重新同步依赖或重建（各代源码与 `deps/` 本来就在盘上）。
 
 **禁用/下线**：`disabled` 只翻 `data_sources.status=0`（access 立刻 403，历史行保留）；
 `unload` 才是摘注册表（此时路由变 404，等价于 Go 版摘导入 + 重启的效果，但不用重启）。
@@ -200,8 +206,9 @@ worker（插件）            ┌─ source-kit 提供的 ctx.fetch(...) ─→ 
 - 若要开那一档，先决条件是**签名校验 + 沙箱**（`§9` 已写死），且必须同批上线：
   签名给出"这份代码是谁签的"，沙箱给出"它做不了什么"。缺任一的"git 安装"等于把
   RCE 变成一个 POST 包名。
-- npm 还多一层：生产镜像要装包管理器、要处理 registry 凭据与网络白名单，而插件产物本来就
-  是**纯 JS + 数据文件**（`tools/pack-plugin.mjs` 的输出形态），不需要依赖解析。
+- npm 还多一层：生产镜像要装包管理器、要处理 registry 凭据与网络白名单，而插件目录本来就
+  是**可直接跑的源码 + 数据文件**（`plugins/<code>/<version>/` + 同 code 的 `deps/` 与真实 JS 依赖），
+  宿主不需要再做依赖解析。
 - zip 解包面自己写（`zip.ts`）：只认 stored/deflate，不做 ZIP64/加密，条目数/单文件/解压总量
   三重上限（压缩炸弹），解出来的名字**只交给 `safeRelPath` 判**（路径合法性只有一处）。
 
@@ -226,14 +233,15 @@ worker（插件）            ┌─ source-kit 提供的 ctx.fetch(...) ─→ 
 | 层/工具 | 判据 | 命令（拟） |
 |---|---|---|
 | `source-host`（L3） | 假插件（fixture 里一个最小包）：load → swap → drain → rollback 全通；坏 manifest/坏 sdk_version/导入抛错三种失败各有用例 | `pnpm -F @loomproxy/source-host test` |
-| 单插件 | 不起 host 也能跑：`plugin-run ./plugins/fq_novel/1.5.0 search --query 三体 --fixture …` | `pnpm -F @loomproxy/source-fq_novel run smoke` |
+| 单插件 | 不起 host 也能跑：`node tools/plugin-run.mjs fq_novel search query=三体`（读最高版本目录的 manifest） | 映射夹具：`node --test "plugins/*/*/test/*.test.ts"` |
 | 热更新 e2e | 起真服务 → 拷一份新版本目录 → `reload` → **不重启**验证 `/datasources` 版本变了、五动作可用、老版本 grace 结束、`rollback` 回退成功 | `pnpm -F @loomproxy/server e2e:reload` |
 
 ## 12. 对迁移顺序的影响（改的是 ③ §8 的 3、6、8 步）
 
 1. L2′ `source-kit` 从"SDK"扩展成"**SDK + 加载契约**"（manifest schema、`defineSource`、`sdkVersion`）。
 2. 新增 L3 `source-host`（loader + registry + lifecycle + RPC），`api` 只依赖它。
-3. 第 3 步的"2 个最简源"必须**以插件目录形态**落地（一开始就按插件包写，别先写成源码包再改）。
+3. 第 3 步的"2 个最简源"必须**以插件目录形态**落地；方案 B 下源码就是插件，直接写进
+   `plugins/<code>/<version>/`，没有打包/回写步骤。
 4. 第 6 步双跑对拍多一条：**热更新对拍**（Go 版重启一次 vs TS 版 reload 一次，对外行为相同）。
 5. 第 8 步的 `server` 收尾多一条：插件目录纳入部署单元
    （`apps/server` 产物 + `plugins/` + `data/` + `.env`，与 Go 版"二进制 + data + .env"同构）。

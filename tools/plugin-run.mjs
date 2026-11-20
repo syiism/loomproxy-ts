@@ -3,7 +3,7 @@
 //   node tools/plugin-run.mjs <code> <action> [key=value ...]
 // 不起 host、不连 DB，只把 manifest + 入口 + 一个真实取数门面接起来，打印 DTO。
 // 用途：改源时 1 秒看结果，不必起服务、不必走面板。
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { loadConfig, createLogger, Upstream } from '../packages/kernel/src/index.ts'
@@ -17,15 +17,18 @@ if (!code || !action) {
 }
 
 const root = new URL('..', import.meta.url).pathname
-const dir = join(root, 'packages', 'sources', code)
-const manifestPath = join(dir, 'manifest.json')
-if (!existsSync(manifestPath)) {
-  console.error(`没有这个插件: ${dir}`)
+const codeDir = join(root, 'plugins', code)
+const version = readdirSync(codeDir, { withFileTypes: true })
+  .filter((e) => e.isDirectory() && /^\d+\.\d+/.test(e.name))
+  .map((e) => e.name)
+  .sort((a, b) => Number(b.split('.')[0]) - Number(a.split('.')[0]) || Number(b.split('.')[1]) - Number(a.split('.')[1]))[0]
+const dir = version ? join(codeDir, version) : ''
+if (!dir || !existsSync(join(dir, 'manifest.json'))) {
+  console.error(`没有这个插件的版本目录: ${codeDir}/<version>`)
   process.exit(2)
 }
-const manifest = pluginManifestSchema.parse(JSON.parse(readFileSync(manifestPath, 'utf8')))
-const entry = join(dir, manifest.entry.replace(/^\.\//, '').replace(/^index\.mjs$/, 'src/index.ts'))
-const mod = await import(pathToFileURL(existsSync(entry) ? entry : join(dir, 'src', 'index.ts')).href)
+const manifest = pluginManifestSchema.parse(JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8')))
+const mod = await import(pathToFileURL(join(dir, manifest.entry)).href)
 const def = mod.default
 if (!def?.handlers?.[action]) {
   console.error(`插件 ${code} 没有动作 ${action}；可用: ${Object.keys(def?.handlers ?? {}).join(' / ')}`)

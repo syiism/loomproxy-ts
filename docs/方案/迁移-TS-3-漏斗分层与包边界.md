@@ -97,7 +97,7 @@
 | L2′ | 语料回放：给定参数 + 假上游 → 产出与 Go 逐字节相同的 DTO | `pnpm -F @loomproxy/source-kit test` | 无 DB、无 HTTP（fetch 注入） |
 | L3 | 内存表 + 假设置下，六种 `AccessReason`、额度扣减、去重窗口、双维限流全部命中 | `pnpm -F @loomproxy/gate test` | 内存 store |
 | L3′ | `source-host`：假插件跑 load→swap→drain→rollback；坏 manifest / 坏 sdk_version / 导入抛错 三种失败各有用例 | `pnpm -F @loomproxy/source-host test` | fixture 插件 |
-| L4（源） | 单源 smoketest：`plugin-run <code> search --fixture …` 输出合法 DTO（**不起 host、不碰 DB**） | `pnpm -F @loomproxy/source-fq_novel run smoke` | 该源自己的 fixture |
+| L4（源） | 单源 smoketest：`node tools/plugin-run.mjs <code> search query=…` 输出合法 DTO（**不起 host、不碰 DB**）；映射夹具跑 `node --test "plugins/*/*/test/*.test.ts"` | `pnpm run sync:plugins` + 上面两条命令，已无按源划分的 workspace 包 | 该源自己的 fixture |
 | L4′ | Fastify `inject()` 跑全部 47 个前端调用点 + 数据面五动作，不快照网络 | `pnpm -F @loomproxy/api test` | 假 store/gate |
 | L5 | 真进程：`/datasources` 列全部携带源；双跑对拍 Go 全绿；**热更新 e2e**（reload×3 + rollback + 坏插件，全程不重启） | `pnpm -F @loomproxy/server e2e` | 现网语料 + 临时 sqlite + 两份插件版本目录 |
 
@@ -122,7 +122,7 @@
 | `middleware/` | L1 的 `transport` 四条（requestid/recovery/logging/cors/cachecontrol）+ L3/L4′（apiauth/ipblock/baseurl/reqparams 属 api，access/billing/ratelimit 属 gate） | 链顺序常量放 L4′ `api/src/chain/order.ts` |
 | `handlers/admin|apikey|auth|catalog|quota|rank|subjectrank|userconfig|verify/` | L4′ `api/src/routes/*/` | 面板契约 ① §6 |
 | `app/` | L5 `apps/server/src/` + L4′ `api/src/app.ts` | `aggregate_search.go` → L4′（它要 gate + 各源）；`monitor.go` → L3（写明细）+ L4′（路由） |
-| `sources/`（deploy 仓） | 源包 → `packages/source-<code>/`（源码形态）+ 发布产物 `plugins/<code>/<version>/` | 一源一包；族层（fq/qimao/acfun）成为同族共享包；**以插件形态落地，别先写成源码包再改** |
+| `sources/`（deploy 仓） | 源包 → `plugins/<code>/{<version>/, deps/, node_modules/}`（方案 B：源码即插件） | 一码一插件、无打包步骤；版本目录是换代/回滚单位，`deps/`（SDK 源码）与 `node_modules/`（真实 JS 文件）按 code 共享、无软链 |
 | `web/` | 原地 | 只改构建产物被 server 读取的方式 |
 | `tools/`、`scripts/` | `tools/`（TS 版门禁脚本） | 见 §7 |
 
@@ -154,14 +154,15 @@ const LAYERS = {
   "packages/gate":            ["packages/contract", "packages/kernel", "packages/store"],
   "packages/source-host":     ["packages/contract", "packages/kernel", "packages/store",
                                "packages/source-kit"],
-  "packages/sources/":        ["packages/contract", "packages/kernel", "packages/source-kit"],
+  "plugins/<code>/":         ["packages/contract", "packages/kernel", "packages/source-kit"],
   "packages/api":             ["packages/contract", "packages/kernel", "packages/store",
                                "packages/source-kit", "packages/gate", "packages/source-host"],
   "apps/server":              ["packages/", "apps/server"],
 }
 // 另加三条：① packages/* 不许 import apps/*（下层认识上层）
-//           ② packages/sources/* 之间只许 import 同族共享包（声明式例外表）
-//           ③ packages/sources/* 不许 import store/gate/api/server（插件只认 SDK）
+//           ② plugins/<code>/<version>/ 里 SDK 走相对 deps/ 路径，不许裸 @loomproxy/*
+//           ③ plugins/<code>/ 下不许软链；不许 import store/gate/api/server（插件只认 SDK）
+// 这份草案以 tools/check-layers.mjs 为准（它才是实际执行的分层判据）。
 ```
 
 ## 8. 迁移顺序（自下而上，每层一个可发布的里程碑）
@@ -194,7 +195,8 @@ const LAYERS = {
 
 > **漏斗成立的自检**：把 `packages/contract` 与 `packages/kernel` 单独 `pnpm pack` 出去，
 > 另开一个空项目 import 它们，能跑通（说明它们真的不认识业务）；
-> 把 `packages/source-fq_novel` 单独 `pnpm pack` 出去，配一份假上游能跑出 DTO（说明源真的不依赖平台）；
+> 把 `plugins/<code>/` 整棵拷到空目录（无仓库、无 workspace），用 `tools/plugin-run.mjs` 跑出一个动作、
+> 用版本目录里的夹具单测跑绿（说明源真的不依赖平台）；
 > 把 `packages/source-host` 单独 `pnpm pack` 出去，喂一个 fixture 插件能 load/swap/rollback
 > （说明宿主真的不依赖具体源）。
 > 这三条过不了，分层就只是目录长得像。

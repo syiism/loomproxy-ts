@@ -5,7 +5,7 @@ node_modules/
 !.env.example
 data/
 dist/
-# 打包产物：plugins/<code>/<version>/ 由 tools/pack-plugin.mjs 生成（保留 .gitkeep）
+# 插件目录（方案 B：源码即插件；是否纳管 git 待单独决策，暂保留 .gitkeep）
 plugins/*/
 !plugins/.gitkeep
 
