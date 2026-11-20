@@ -129,6 +129,13 @@ export function registerAuthRoutes(app: FastifyInstance, deps: Deps): void {
       { ...config, jwtExpireHours: effectiveHours },
     )
     stores.sessions?.create(hit.user.id, jti, expires_at, req.ip, String(req.headers['user-agent'] ?? ''))
+    // 多设备监控：登录之后收一次口子——活跃会话超上限就踢掉最旧的（保留本次 + 最近 N-1 个）。
+    // 开关关闭时不处置（与 Go 同口径）；IP 数不参与处置，只看活跃会话数。
+    if (stores.settings?.getBool('device_watch_enabled', false)) {
+      const maxKeep = stores.settings.getInt('max_active_sessions', 5)
+      const removed = stores.sessions?.revokeExcess(hit.user.id, jti, maxKeep) ?? 0
+      if (removed > 0) console.error(`[auth] 多设备监控自动移出会话 user_id=${hit.user.id} 移出=${removed} 保留=${maxKeep}`)
+    }
     users.touchLogin(hit.user.id)
     return ok({ token, expires_at, user: hit.user })
   })

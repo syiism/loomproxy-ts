@@ -67,6 +67,8 @@ type PlanRow = { id: number; name: string; code: string; description: string; st
 
 export interface SessionStore {
   create(userId: number, jti: string, expiresAt: string, ip: string, userAgent: string): void
+  /** 多设备监控：保留 keepJti + 最近 maxKeep-1 个活跃会话，其余撤销；返回撤销数 */
+  revokeExcess(userId: number, keepJti: string, maxKeep: number): number
   /** 这张票在不在本库（跨版本/跨库签发的票不在） */
   exists(jti: string): boolean
   /** jti 是否仍然有效（未撤销、未过期）；用户被禁用也视为失效 */
@@ -84,10 +86,35 @@ export class DbSessions implements SessionStore {
   }
 
   create(userId: number, jti: string, expiresAt: string, ip: string, userAgent: string): void {
+    const now = nowIso()
     this.db.run(
-      'INSERT INTO sessions (user_id, jti, ip, user_agent, created_at, expires_at) VALUES (?,?,?,?,?,?)',
-      userId, jti, ip, userAgent, nowIso(), expiresAt,
+      'INSERT INTO sessions (user_id, jti, ip, user_agent, created_at, expires_at, last_active_at) VALUES (?,?,?,?,?,?,?)',
+      userId, jti, ip, userAgent, now, expiresAt, now,
     )
+  }
+
+  revokeExcess(userId: number, keepJti: string, maxKeep: number): number {
+    if (maxKeep <= 0) return 0
+    // 保留当前会话 + 最近 maxKeep-1 个（按 last_active_at DESC），其余撤销。
+    // 与 Go 的 RevokeExcessSessions 同口径：一次取回全部候选再切片，不依赖 SQL OFFSET。
+    const keep = this.db.get<{ id: number; last_active_at: string | null }>(
+      'SELECT id, last_active_at FROM sessions WHERE jti = ? AND user_id = ?', keepJti, userId,
+    )
+    if (!keep) return 0
+    const candidates = this.db.all<{ id: number; last_active_at: string | null }>(
+      `SELECT id, last_active_at FROM sessions
+        WHERE user_id = ? AND revoked_at IS NULL AND id <> ?
+          AND (expires_at > ? OR expires_at <= '1970-01-02T00:00:00.000Z')
+          AND (last_active_at IS NULL OR last_active_at <= ?)
+        ORDER BY last_active_at DESC, id DESC`,
+      userId, keep.id, nowIso(), keep.last_active_at ?? '9999-12-31T23:59:59.999Z',
+    )
+    const stale = candidates.slice(Math.max(0, maxKeep - 1))
+    if (stale.length === 0) return 0
+    const now = nowIso()
+    let n = 0
+    for (const s of stale) n += this.db.run('UPDATE sessions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL', now, s.id).changes
+    return n
   }
 
   exists(jti: string): boolean {

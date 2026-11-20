@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   user_agent TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   expires_at TEXT NOT NULL,
-  revoked_at TEXT
+  revoked_at TEXT,
+  last_active_at TEXT
 );
 CREATE TABLE IF NOT EXISTS api_keys (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -324,6 +325,7 @@ export class SqliteDb implements Database {
     this.raw.exec(SCHEMA)
     // 老库补列：CREATE TABLE IF NOT EXISTS 不会给已存在的表加字段，而发版时不能要求重建库
     this.ensureColumn('source_groups', 'description', "TEXT NOT NULL DEFAULT ''")
+    this.ensureColumn('sessions', 'last_active_at', 'TEXT')
   }
 
   private ensureColumn(table: string, column: string, decl: string): void {

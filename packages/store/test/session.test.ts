@@ -39,3 +39,29 @@ test('吊销的会话：即使永不过期也失效', () => {
   db.run("INSERT INTO sessions (user_id,jti,ip,user_agent,created_at,expires_at,revoked_at) VALUES (1,'j4','','','now','1970-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z')")
   assert.equal(sessions.isActive('j4'), false)
 })
+
+test('revokeExcess：保留本次 + 最近 N-1 个，踢掉最旧的（只看活跃会话数）', () => {
+  const { db, sessions } = make()
+  db.run("INSERT INTO users (id,username,password_hash,status,created_at,updated_at) VALUES (1,'u','x',1,'now','now')")
+  const future = new Date(Date.now() + 3600_000).toISOString()
+  // 一个用户 4 个会话，last_active_at 依次变旧；j4 是本次登录
+  for (let i = 1; i <= 4; i++) {
+    const active = `2026-11-20T0${i}:00:00.000Z`
+    db.run('INSERT INTO sessions (user_id,jti,ip,user_agent,created_at,expires_at,last_active_at) VALUES (1,?,?,?,?,?,?)',
+      `j${i}`, '', '', '2026-11-20', future, active)
+  }
+  // maxKeep=2 → 保留 j4(本次) + j3(最近)，撤销 j1/j2
+  const removed = sessions.revokeExcess(1, 'j4', 2)
+  assert.equal(removed, 2)
+  assert.equal(sessions.exists('j4'), true)
+  assert.equal(sessions.exists('j3'), true)
+  // j1/j2 被撤销（exists 只数行不判 revoked，要看 isActive）
+  assert.equal(sessions.isActive('j1'), false)
+  assert.equal(sessions.isActive('j2'), false)
+  assert.equal(sessions.isActive('j3'), true)
+})
+
+test('revokeExcess：开关关闭（maxKeep<=0）不处置', () => {
+  const { sessions } = make()
+  assert.equal(sessions.revokeExcess(1, 'x', 0), 0)
+})
