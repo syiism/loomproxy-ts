@@ -1178,6 +1178,29 @@ test('JWT 互认：Go 形状的票（uid/username + jti，无 roles/exp）在本
   }
 })
 
+test('用户名长度校验 1–16：注册端点 400、store 兜底', async () => {
+  const { app, root, users } = await makeApp()
+  try {
+    // 空用户名（trim 后 0）→ 400
+    const empty = await app.inject({ method: 'POST', url: '/auth/register', payload: { username: '   ', email: 'a@b.com', password: 'pw123456' } })
+    assert.equal(empty.statusCode, 400)
+    assert.match((empty.json() as { msg: string }).msg, /用户名/)
+    // 17 字符 → 400
+    const tooLong = await app.inject({ method: 'POST', url: '/auth/register', payload: { username: 'a'.repeat(17), email: 'b@b.com', password: 'pw123456' } })
+    assert.equal(tooLong.statusCode, 400)
+    assert.match((tooLong.json() as { msg: string }).msg, /1–16/)
+    // 1 字符 → 通过（与 contract 口径一致）
+    const one = await app.inject({ method: 'POST', url: '/auth/register', payload: { username: 'z', email: 'z@b.com', password: 'pw123456' } })
+    assert.equal(one.statusCode, 200)
+    assert.ok(users.byUsernameOrEmail('z'))
+    // store 层兜底：绕过端点直接 create 超长也抛
+    assert.throws(() => users.create({ username: 'a'.repeat(20), password: 'pw123456' }), /1–16/)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('默认设置真的生效：注册开关/默认角色与套餐/邮箱名单/维护模式/验证码场景', async () => {
   const { app, root, users, settings, roles, plans } = await makeApp()
   try {

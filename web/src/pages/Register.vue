@@ -4,8 +4,8 @@
       <div class="font-serif text-2xl md:text-3xl font-medium tracking-tighter mb-2">注册</div>
       <div class="text-text-muted text-sm md:text-base mb-7">创建一个 LoomProxy 普通用户账号</div>
       <form @submit.prevent="onSubmit" class="space-y-5">
-        <UiField label="用户名" hint="3–64 个字符" :error="errors.username">
-          <input v-model="username" class="input" minlength="3" maxlength="64" autocomplete="username" required @input="errors.username = ''">
+        <UiField label="用户名" hint="1–16 个字符" :error="errors.username">
+          <input v-model="username" class="input" minlength="1" maxlength="16" autocomplete="username" required @input="errors.username = ''">
         </UiField>
         <UiField label="邮箱" hint="必须填写" :error="errors.email">
           <input v-model="email" type="email" class="input" autocomplete="email" required>
@@ -98,8 +98,9 @@ const onSubmit = async () => {
   errors.value = { username: '', email: '', password: '', code: '' }
 
   const name = username.value.trim()
-  if (name.length < 3 || name.length > 64) {
-    errors.value.username = '用户名长度需为 3–64 个字符'
+  // 与 contract/src/user.ts 的 1–16 口径一致（按码点计）
+  if ([...name].length < 1 || [...name].length > 16) {
+    errors.value.username = '用户名长度需为 1–16 个字符'
     return
   }
   if (!email.value || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value)) {

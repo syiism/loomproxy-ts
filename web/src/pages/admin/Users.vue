@@ -161,8 +161,8 @@
     <!-- 新建用户 -->
     <UiModal v-model:open="createOpen" title="新建用户" @confirm="saveCreate" :confirm-loading="submitting" confirm-text="创建">
       <form @submit.prevent="saveCreate" class="space-y-5">
-        <UiField label="用户名" hint="3–64 个字符">
-          <input v-model="createForm.username" class="input" minlength="3" maxlength="64" required>
+        <UiField label="用户名" hint="1–16 个字符">
+          <input v-model="createForm.username" class="input" minlength="1" maxlength="16" required>
         </UiField>
         <UiField label="初始密码" hint="8–16 位，包含字母和数字">
           <input v-model="createForm.password" type="password" class="input" minlength="8" maxlength="16" required>

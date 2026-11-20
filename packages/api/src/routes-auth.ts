@@ -1,7 +1,7 @@
 // 登录、会话、个人资料与账号密钥（面板 Login/Profile 两页的入口）。
 // 会话是**现行校验**：撤销之后旧票立刻失效（JWT 里带 jti，每次请求查 sessions 表）。
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { fail, ok } from '@loomproxy/contract'
+import { fail, ok, normalizeUsername, validUsername } from '@loomproxy/contract'
 import type { Config } from '@loomproxy/kernel'
 import { resolveIdentity, issueToken, tokenFromRequest, verifyToken } from './auth.ts'
 import { lockedUntil, recordAttempt } from './login-limiter.ts'
@@ -231,10 +231,14 @@ export function registerAuthRoutes(app: FastifyInstance, deps: Deps): void {
       return
     }
     const b = (req.body ?? {}) as { username?: string; password?: string; email?: string; nickname?: string; verification_code?: string }
-    const username = (b.username ?? '').trim().toLowerCase()
+    const username = normalizeUsername(b.username ?? '')
     const email = (b.email ?? '').trim().toLowerCase()
     if (!username || !b.password) {
       reply.code(400).send(fail(config.errorCode, '缺少用户名或密码'))
+      return
+    }
+    if (!validUsername(username)) {
+      reply.code(400).send(fail(config.errorCode, '用户名长度需为 1–16 个字符'))
       return
     }
     if (email && !emailAllowed(email, settings)) {

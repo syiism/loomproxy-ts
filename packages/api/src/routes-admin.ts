@@ -4,6 +4,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import {
   MEDIA, RANK_BOARDS, fail, isValidMedia, isValidSubjectDim, mediaLabel, ok,
+  normalizeUsername, validUsername,
   type RankBoard, type SubjectCoverageRow, type SubjectItem,
 } from '@loomproxy/contract'
 import { TtlCache, clampPage, clampPageSize, createClock } from '@loomproxy/kernel'
@@ -145,6 +146,10 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
     const b = (req.body ?? {}) as { username?: string; password?: string; nickname?: string; email?: string; role_codes?: string[]; plan_id?: number }
     if (!b.username || !b.password) {
       reply.code(400).send(fail(config.errorCode, '缺少用户名或密码'))
+      return
+    }
+    if (!normalizeUsername(b.username) || !validUsername(normalizeUsername(b.username))) {
+      reply.code(400).send(fail(config.errorCode, '用户名长度需为 1–16 个字符'))
       return
     }
     if (!stores.users) return unavailable(reply, '用户存储未接')

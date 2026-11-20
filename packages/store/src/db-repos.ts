@@ -3,7 +3,7 @@
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
 import { compareSync as bcryptCompare } from 'bcryptjs'
 import type { CallLogPage, CallLogQuery, CallLogRow, SettingDecl, SettingType, SourceMeta } from '@loomproxy/contract'
-import { isValidSettingType } from '@loomproxy/contract'
+import { isValidSettingType, normalizeUsername, validUsername } from '@loomproxy/contract'
 import { type Database, bool, boolInt, nowIso, type SqlValue } from './sqlite.ts'
 import type { CallLogStore, NewCallLog } from './call-logs.ts'
 import type { DataSourceRow, DataSourceStore } from './data-sources.ts'
@@ -288,12 +288,15 @@ export class DbUsers implements UserStore {
   }
 
   create(input: { username: string; password: string; nickname?: string; email?: string; status?: number; planId?: number | null; roles?: string[] }): UserView {
+    const name = normalizeUsername(input.username)
+    // 唯一口径在 contract：1–16 码点。store 层兜底，任何创建路径（注册/管理端/播种）都过这里。
+    if (!validUsername(name)) throw new Error(`用户名长度需为 1–16 个字符`)
     const now = nowIso()
     return this.db.tx(() => {
       const { lastInsertRowid } = this.db.run(
         `INSERT INTO users (username, nickname, email, password_hash, status, plan_id, created_at, updated_at)
          VALUES (?,?,?,?,?,?,?,?)`,
-        input.username.trim().toLowerCase(),
+        name,
         input.nickname ?? input.username,
         (input.email ?? '').trim().toLowerCase(),
         hashPassword(input.password),

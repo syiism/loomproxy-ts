@@ -29,7 +29,7 @@
         <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight mb-5 pb-3 border-b border-border">账户资料</h2>
         <form @submit.prevent="onSaveProfile" class="space-y-5">
           <UiField label="用户名" :hint="usernameHint">
-            <input v-model="profileForm.username" class="input font-mono" minlength="3" maxlength="64" :disabled="!!usernameNextAt" placeholder="3-64 个字符">
+            <input v-model="profileForm.username" class="input font-mono" minlength="1" maxlength="16" :disabled="!!usernameNextAt" placeholder="1-16 个字符">
           </UiField>
           <UiField label="昵称">
             <input v-model="profileForm.nickname" class="input" maxlength="64" placeholder="未设置">
