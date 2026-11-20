@@ -18,6 +18,10 @@ import { Ledger, type DedupeStats } from '@loomproxy/gate'
 
 type Deps = { config: Config; stores: ApiStores; dataSources?: DataSourceStore; host?: SourceHost; ledger?: Ledger }
 
+// 接口监控页的"统计起点"：进程启动时刻。Go 版用内存计数器的启动时间，TS 用 DB 累计读数，
+// 但起点语义一致（本次服务进程开始统计的时刻），重启会刷新——面板文案的"重启清零"口径对这部分成立。
+const MONITOR_STARTED_AT = new Date().toISOString()
+
 async function requireAdmin(req: FastifyRequest, reply: FastifyReply, deps: Deps) {
   const id = await resolveIdentity(req, deps.config, {
     ...(deps.stores.sessions ? { sessions: deps.stores.sessions } : {}),
@@ -819,8 +823,45 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
   // ---- 监控 ----
   app.get('/admin/monitor', async (req, reply) => {
     if (!(await guard(req, reply))) return
-    const logs = stores.callLogs as unknown as { stats?: () => unknown[] }
-    return ok({ stats: logs?.stats?.() ?? [], total: stores.callLogs?.count() ?? 0 })
+    // 面板「接口监控」读的是 Go 那一套完整形状（started_at/total/success/failed/success_rate/
+    // lifetime_total/items/recent），不是 {stats,total}。TS 用 api_call_stats 的累计读数做口径：
+    // 每个源/动作一行，total=success+failed，avg=总延迟/total，lifetime 就是累计值。
+    // recent 取最近 50 条明细。这样各格不再是 0/空，"总调用"也不再错用 DB 明细行数。
+    const stats = (stores.callLogs as unknown as { stats?: () => Array<Record<string, unknown>> })?.stats?.() ?? []
+    const num = (v: unknown) => Number(v ?? 0)
+    let total = 0, success = 0, lifetimeTotal = 0
+    const items = stats.map((r) => {
+      const t = num(r['total']), s = num(r['success']), f = num(r['failed'])
+      const lat = num(r['total_latency_ms'])
+      total += t
+      success += s
+      lifetimeTotal += t
+      return {
+        source: String(r['source'] ?? ''),
+        action: String(r['action'] ?? ''),
+        total: t,
+        success: s,
+        failed: f,
+        success_rate: t > 0 ? (s / t) * 100 : 0,
+        avg_latency_ms: t > 0 ? Math.round(lat / t) : 0,
+        max_latency_ms: num(r['max_latency_ms']),
+        lifetime: t,
+        last_called_at: r['updated_at'] ?? null,
+      }
+    })
+    const failed = total - success
+    const recent = (stores.callLogs?.page({ page: 1, pageSize: 50 })?.list ?? []).slice(0, 50)
+    return ok({
+      started_at: MONITOR_STARTED_AT,
+      total,
+      success,
+      failed,
+      success_rate: total > 0 ? (success / total) * 100 : 0,
+      lifetime_total: lifetimeTotal,
+      items,
+      recent,
+      name_store_persistent: false,
+    })
   })
 
   app.get('/admin/monitor/history', async (req, reply) => {

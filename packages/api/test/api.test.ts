@@ -197,6 +197,31 @@ test('数据面是裸对象：search 打标 source/kind，content 原样返回',
   }
 })
 
+test('/admin/monitor 回完整形状（面板 overview/items/recent），不是 {stats,total}', async () => {
+  const { app, root } = await makeApp()
+  try {
+    const token = adminToken()
+    await app.inject({ method: 'GET', url: '/demo_one/search?key=x' }) // 落一条明细与聚合
+    const res = await app.inject({ method: 'GET', url: '/admin/monitor', headers: { authorization: `Bearer ${token}` } })
+    assert.equal(res.statusCode, 200)
+    const d = (res.json() as { data: Record<string, unknown> }).data
+    for (const k of ['started_at', 'total', 'success', 'failed', 'success_rate', 'lifetime_total', 'items', 'recent']) {
+      assert.ok(k in d, `monitor 缺字段 ${k}`)
+    }
+    assert.equal(typeof d['total'], 'number')
+    assert.equal(typeof d['success_rate'], 'number')
+    assert.ok(Array.isArray(d['items']))
+    assert.ok(Array.isArray(d['recent']))
+    const item = (d['items'] as Array<Record<string, unknown>>)[0]!
+    for (const k of ['source', 'action', 'total', 'success', 'failed', 'success_rate', 'avg_latency_ms', 'max_latency_ms', 'lifetime', 'last_called_at']) {
+      assert.ok(k in item, `monitor item 缺字段 ${k}`)
+    }
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('必填参数缺失 → 400 信封（不许落到源的带内错误）', async () => {
   const { app, root } = await makeApp()
   try {

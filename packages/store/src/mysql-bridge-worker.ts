@@ -23,6 +23,19 @@ const pool = mysql.createPool({
   dateStrings: cfg.dateStrings,
   waitForConnections: true,
   connectionLimit: 4,
+  // mysql2 把 DECIMAL/BIGINT（含 SUM()）返回为字符串防爆精度，但本项目的金额/id 都是小整数，
+  // 与 SQLite 对齐成 number；否则前端 `reduce((a,b)=>a+b)` 会把数字当字符串拼出 "00005991…"。
+  // 只在纯整数串时转，保留其它字符串原样。
+  typeCast: (field, next) => {
+    const v = next()
+    const type = String(field.type).toUpperCase()
+    if ((type === 'DECIMAL' || type === 'NEWDECIMAL' || type === 'BIGINT' || type === 'LONGLONG') &&
+        typeof v === 'string' && /^-?\d+$/.test(v)) {
+      const n = Number(v)
+      return Number.isSafeInteger(n) ? n : v
+    }
+    return v
+  },
 })
 
 function writeBuf(text: string): number {
