@@ -119,6 +119,18 @@ token 缓存——少一条会过期的凭证状态。
 命名约定：`<站点>_<媒介>`——同一个站点的其它形态各起一包（如 `sq_audio` / `sq_comic`），
 **平台不做源特例**，形态由包自己的 `meta.media_type` 与字段映射决定。
 
+从 `asyn-panel/server` 转写的三个源包（`yueyou_novel` / `acfun_novel` / `hg_drama`）沿用同一口径：
+协议算法（签名/加密/会话/URL）转写进各自的 `src/protocol.ts`，字段映射进 `src/normalize.ts`，
+上游只走 `ctx.fetch`，密钥/常量不进文档。三个差异点：
+
+| 源 | 协议要点 | 真网状态 |
+|---|---|---|
+| `yueyou_novel` | 匿名会话 + HMAC + **纯 JS DES-ECB**（OpenSSL 3 默认不带 DES，不能用 node:crypto） | 搜索/详情/目录/正文全通 |
+| `acfun_novel` | 签名头 + AES-ECB envTs + encData 解密 + 动态域名；7 合 1 源只取 fiction | 内置 token 已失效（`code:1001`），参考实现同样失败；不伪造数据 |
+| `hg_drama` | 短剧/漫剧 tab 10/13；签名**复用 fq_novel 随包 sign 模块**（同 fanqie 体系，不抄第二份） | 搜索/目录通；正文是 CENC 视频流 → `content` 报 `unsupported_media` TODO |
+
+限制：`hg_drama/detail` 的 `multi-detail` 路由当前回 403「路由已封禁」（参考实现同症状）。
+
 ## JWT 互认（与 Go 版同一个 `JWT_SECRET` 时）
 
 - **claims 同形**：`{uid, username, jti, iat, iss:"loomproxy", sub:"user", exp?}` —— 与本仓早期形状
