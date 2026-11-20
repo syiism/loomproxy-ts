@@ -95,9 +95,16 @@ export function apiKeyRevokeToDelete(sql: string, params: SqlValue[]): { sql: st
     return { sql: `DELETE FROM api_keys WHERE ${where}`, params: params.slice(1) }
   }
   // 查询里 "AND revoked_at IS NULL" / " WHERE revoked_at IS NULL" 去掉（Go 无此列，全部都是有效行）
-  const out = sql
+  let out = sql
     .replace(/\s+AND\s+revoked_at\s+IS\s+NULL/gi, '')
     .replace(/\s+WHERE\s+revoked_at\s+IS\s+NULL/gi, '')
+  // 带 api_keys 别名的子查询（如 devices 的 `FROM api_keys k WHERE k.user_id=... AND k.revoked_at IS NULL`）：
+  // 只去掉该别名的 revoked_at 条件，不能碰 sessions 的 s.revoked_at（那列在 MySQL 真实存在）。
+  for (const m of out.matchAll(/\bapi_keys\s+(\w+)/gi)) {
+    const alias = m[1]!
+    out = out.replace(new RegExp(`\\s+AND\\s+${alias}\\.revoked_at\\s+IS\\s+NULL`, 'gi'), '')
+    out = out.replace(new RegExp(`\\s+WHERE\\s+${alias}\\.revoked_at\\s+IS\\s+NULL`, 'gi'), '')
+  }
   return { sql: out, params }
 }
 

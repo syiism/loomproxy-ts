@@ -74,6 +74,16 @@ test('无唯一索引表：先查后写 upsert（quota_limits）', () => {
   assert.deepEqual(au!.updateParams, [100, 'u', 1, 'source', 'fq_novel'])
 })
 
+test('api_keys 别名子查询去 revoked_at，但保留 sessions 的 revoked_at', () => {
+  const sql = `SELECT u.id,
+    (SELECT COUNT(*) FROM sessions s WHERE s.user_id=u.id AND s.revoked_at IS NULL) AS active,
+    (SELECT COUNT(*) FROM api_keys k WHERE k.user_id=u.id AND k.revoked_at IS NULL) AS keys
+    FROM users u`
+  const out = apiKeyRevokeToDelete(sql, []).sql
+  assert.match(out, /s\.revoked_at\s+IS\s+NULL/, 'sessions 的 revoked_at 必须保留')
+  assert.doesNotMatch(out, /k\.revoked_at/, 'api_keys 别名的 revoked_at 必须去掉')
+})
+
 test('无唯一索引表：user_quota_overrides 用 group_code（scope 忽略）', () => {
   const au = appUpsert(
     'INSERT INTO user_quota_overrides (user_id,scope,target,"limit",created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(user_id,scope,target) DO UPDATE SET "limit"=excluded."limit"',
