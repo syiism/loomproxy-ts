@@ -227,23 +227,24 @@ export function createDispatcher(deps: DispatchDeps) {
         }
       }
 
-      // 600：限流（IP 与用户双维度，两者都放行才放行）
-      // 参数每次现取：套餐覆盖 → 全局成本行 → 无（不限）。改完立刻生效
+      // 600：限流（IP 与用户双维度，两者都放行才放行）——与 Go gate/ratelimit.go 同口径：
+      // · 生效规则来自 rateSpecFor（套餐覆盖 → 全局成本行），每次现取，改完立刻生效；
+      // · 规则为空 = 不限（limit_count/interval 都为 0）→ 两个维度都直接放行；
+      // · IP 与用户用**同一个 spec**（不是各自硬编码），限流口径是窗口计数，不是匀速回填。
       const spec = deps.quotaExtra?.rateSpecFor(user?.plan_id ?? null, source, action) ?? {}
-      const userKey = identity.userId !== undefined ? `u:${identity.userId}` : 'u:anon'
-      if (!deps.limiter.allow(`ip:${req.ip}`, { count: 30, windowMs: 60_000 })) {
-        reply.code(429).send({ code: deps.config.errorCode, msg: '接口请求过于频繁，请稍后重试' })
-        return
-      }
-      const userSpec =
+      const limitSpec: { count: number; windowMs: number } | { intervalMs: number } | undefined =
         spec.count !== undefined && spec.windowMs !== undefined
           ? { count: spec.count, windowMs: spec.windowMs }
           : spec.intervalMs !== undefined
             ? { intervalMs: spec.intervalMs }
-            : { intervalMs: 1000 }
-      if (!deps.limiter.allow(`${userKey}:${source}:${action}`, userSpec)) {
-        reply.code(429).send({ code: deps.config.errorCode, msg: '接口请求过于频繁，请稍后重试' })
-        return
+            : undefined
+      if (limitSpec) {
+        const userKey = identity.userId !== undefined ? `u:${identity.userId}` : 'u:anon'
+        if (!deps.limiter.allow(`ip:${req.ip}:${source}:${action}`, limitSpec) ||
+            !deps.limiter.allow(`${userKey}:${source}:${action}`, limitSpec)) {
+          reply.code(429).send({ code: deps.config.errorCode, msg: '接口请求过于频繁，请稍后重试' })
+          return
+        }
       }
 
       const started = Date.now()

@@ -54,6 +54,24 @@ test('双维限流：IP 与用户各有一桶，两者都放行才放行', () =>
   assert.equal(rl.allow('ip:1.2.3.4', { count: 3, windowMs: 60_000 }), false)
 })
 
+test('限流：不限（count/interval 为0）直接放行；滑动窗口过期后放行，被拒不计数', () => {
+  let now = 5_000_000
+  const rl = new RateLimiter(() => now)
+  // 不限：0 次上限 / 0 间隔一律放行
+  for (let i = 0; i < 50; i++) assert.equal(rl.allow('free', { count: 0, windowMs: 60_000 }), true)
+  for (let i = 0; i < 50; i++) assert.equal(rl.allow('free2', { intervalMs: 0 }), true)
+
+  // 滑动窗口：2 次/10s。前两次放行，第三次拒；被拒不计数
+  assert.equal(rl.allow('w', { count: 2, windowMs: 10_000 }), true)
+  assert.equal(rl.allow('w', { count: 2, windowMs: 10_000 }), true)
+  assert.equal(rl.allow('w', { count: 2, windowMs: 10_000 }), false)
+  now += 5000
+  assert.equal(rl.allow('w', { count: 2, windowMs: 10_000 }), false) // 第1次仍在窗口内
+  now += 5100 // 第1次(5000000)已滑出窗口
+  assert.equal(rl.allow('w', { count: 2, windowMs: 10_000 }), true)  // 放行
+  assert.equal(rl.allow('w', { count: 2, windowMs: 10_000 }), true)  // 第2次(5000000+0)也滑出了
+})
+
 test('计费：同内容在窗口内只扣一次，换一章照扣', () => {
   let now = 1_000_000
   const led = new Ledger(() => now)
