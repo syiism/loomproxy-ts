@@ -186,15 +186,20 @@ export class DbQuota {
     page_size: number
     list: UsageRow[]
   } {
+    // username 不落在 quota_usage_logs（线上 MySQL 无此列，SQLite 的冗余列也不可信），
+    // 与 Go 同口径：JOIN users 补用户名；按用户名搜索也走 users.username 模糊匹配。
+    const join = q.username ? 'JOIN users u ON u.id = l.user_id' : 'LEFT JOIN users u ON u.id = l.user_id'
     const where: string[] = []
     const params: SqlValue[] = []
-    if (q.userId !== undefined) { where.push('user_id = ?'); params.push(q.userId) }
-    if (q.username) { where.push('username = ?'); params.push(q.username) }
-    if (q.groupCode) { where.push('group_code = ?'); params.push(q.groupCode) }
+    if (q.userId !== undefined) { where.push('l.user_id = ?'); params.push(q.userId) }
+    if (q.username) { where.push('u.username LIKE ?'); params.push(`%${q.username}%`) }
+    if (q.groupCode) { where.push('l.group_code = ?'); params.push(q.groupCode) }
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : ''
-    const total = this.db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM quota_usage_logs ${clause}`, ...params)?.n ?? 0
+    const from = `FROM quota_usage_logs l ${join} ${clause}`
+    const total = this.db.get<{ n: number }>(`SELECT COUNT(*) AS n ${from}`, ...params)?.n ?? 0
     const list = this.db.all<UsageRow>(
-      `SELECT * FROM quota_usage_logs ${clause} ORDER BY id DESC LIMIT ? OFFSET ?`,
+      `SELECT l.id, l.user_id, u.username AS username, l.group_code, l.\`interface\`, l.cost, l.created_at
+         ${from} ORDER BY l.id DESC LIMIT ? OFFSET ?`,
       ...params, q.pageSize, (q.page - 1) * q.pageSize,
     )
     return { total, page: q.page, page_size: q.pageSize, list }
