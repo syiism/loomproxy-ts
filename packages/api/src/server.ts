@@ -85,8 +85,6 @@ export function buildServer(deps: ApiDeps): FastifyInstance {
 
   app.addHook('onRequest', async (req, reply) => {
     reply.header('x-request-id', req.id)
-    // 平台时区：面板的 fmtDate 据此格式化时间，而不是浏览器本地时区（浏览器在哪都不影响口径）
-    reply.header('x-tz-offset', String(deps.config.tzOffsetHours))
   })
   app.addHook('onResponse', async (req, reply) => {
     const meta = callMetaOf(req)

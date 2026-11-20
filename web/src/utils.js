@@ -5,17 +5,14 @@ export function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 }
 
-import { getTzOffset } from './api/client.js'
-
-// 时间统一按平台时区（后端 x-tz-offset）显示，不用浏览器本地时区——
-// 否则同一条 ISO 在不同时区的浏览器上显示差 8 小时，与服务端日志对不上。
+// 时间按 UTC 显示：接口返回的 ISO、DB 的 created_at、Go 服务端日志都是 UTC，
+// 三者口径一致。不用浏览器本地时区（不同时区浏览器显示会差几小时）。
 export function fmtDate(s) {
   if (!s) return '—'
   const d = new Date(s)
   if (isNaN(d)) return s
-  const shifted = new Date(d.getTime() + getTzOffset() * 3600_000)
   const pad = n => String(n).padStart(2, '0')
-  return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())} ${pad(shifted.getUTCHours())}:${pad(shifted.getUTCMinutes())}`
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`
 }
 
 // 角色代码 → 淡彩色调

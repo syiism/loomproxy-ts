@@ -93,28 +93,20 @@ export class DbSessions implements SessionStore {
     )
   }
 
-  revokeExcess(userId: number, keepJti: string, maxKeep: number): number {
+  revokeExcess(userId: number, _keepJti: string, maxKeep: number): number {
     if (maxKeep <= 0) return 0
-    // 保留当前会话 + 最近 maxKeep-1 个（按 last_active_at DESC），其余撤销。
-    // 与 Go 的 RevokeExcessSessions 同口径：一次取回全部候选再切片，不依赖 SQL OFFSET。
-    const keep = this.db.get<{ id: number; last_active_at: string | null }>(
-      'SELECT id, last_active_at FROM sessions WHERE jti = ? AND user_id = ?', keepJti, userId,
-    )
-    if (!keep) return 0
-    const candidates = this.db.all<{ id: number; last_active_at: string | null }>(
-      `SELECT id, last_active_at FROM sessions
-        WHERE user_id = ? AND revoked_at IS NULL AND id <> ?
-          AND (expires_at > ? OR expires_at <= '1970-01-02T00:00:00.000Z')
-          AND (last_active_at IS NULL OR last_active_at <= ?)
-        ORDER BY last_active_at DESC, id DESC`,
-      userId, keep.id, nowIso(), keep.last_active_at ?? '9999-12-31T23:59:59.999Z',
-    )
-    const stale = candidates.slice(Math.max(0, maxKeep - 1))
-    if (stale.length === 0) return 0
-    const now = nowIso()
-    let n = 0
-    for (const s of stale) n += this.db.run('UPDATE sessions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL', now, s.id).changes
-    return n
+    // 保留最近 maxKeep 个活跃会话（last_active_at 为 NULL 排最后=最旧），其余撤销。
+    // 用窗口函数一次算完，SQLite 3.25+ / MySQL 8 都支持；登录场景刚建的会话 last_active_at=now
+    // 必是最近，所以"保留最近 N 个"与 Go 的"保留本次+最近 N-1 个"等价。
+    return this.db.run(
+      `UPDATE sessions SET revoked_at = ? WHERE id IN (
+         SELECT id FROM (
+           SELECT id, ROW_NUMBER() OVER (ORDER BY (last_active_at IS NULL), last_active_at DESC, id DESC) rn
+             FROM sessions WHERE user_id = ? AND revoked_at IS NULL
+         ) WHERE rn > ?
+       )`,
+      nowIso(), userId, maxKeep,
+    ).changes
   }
 
   exists(jti: string): boolean {
