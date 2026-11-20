@@ -17,6 +17,7 @@
    `packages/plugins/sq_novel`（Legado JS 源**转写**：算法/常量对齐参考实现，用黄金值用例钉住）。
    新源照这个结构（一源一包、`manifest.json` 是唯一声明位、映射逻辑进 `src/normalize.ts` 且可单测、
    宿主用 `packages/source-host/test/fixtures/*` 夹具验证）。
+   **完整编写范式见 `docs/方案/源插件编写范式.md`**（目录结构/manifest 字段表/三种转写形态/测试与上线清单）。
    **协议层复用外部参考实现**（`/home/muyang/work/novels/fanq`，见 README「外部依赖」）时，
    不要顺手把签名/加密/会话池抄进本仓——那是最容易与上游漂移的一块。
 
