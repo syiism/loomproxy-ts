@@ -197,6 +197,25 @@ test('数据面是裸对象：search 打标 source/kind，content 原样返回',
   }
 })
 
+test('5xx 错误脱敏：内部 SQL/堆栈不透给前端', async () => {
+  const { app, root, settings } = await makeApp()
+  // 让 settings.list() 抛带内部 SQL 的错（模拟 MysqlDb 抛错），验证全局错误处理器脱敏
+  ;(settings as unknown as { list: () => never }).list = () => {
+    throw new Error('MySQL 查询失败: SELECT secret FROM internal\nSQL: SELECT secret FROM internal')
+  }
+  try {
+    const res = await app.inject({ method: 'GET', url: '/admin/settings', headers: { authorization: `Bearer ${adminToken()}` } })
+    assert.equal(res.statusCode, 500)
+    const body = res.body
+    assert.ok(!body.includes('internal'), `500 响应泄露了内部 SQL: ${body}`)
+    assert.ok(!body.includes('SELECT'), `500 响应泄露了 SQL: ${body}`)
+    assert.match(body, /服务内部错误/)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('/admin/stats 的 today_new 来自今日创建的用户（不是硬编码 0）', async () => {
   const { app, root } = await makeApp()
   try {

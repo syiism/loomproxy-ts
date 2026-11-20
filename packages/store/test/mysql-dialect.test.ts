@@ -24,6 +24,14 @@ test('INSERT OR IGNORE → INSERT IGNORE', () => {
   assert.equal(translate('INSERT OR IGNORE INTO user_roles (user_id,role_id) VALUES (?,?)', { tables: {} }), 'INSERT IGNORE INTO user_roles (user_id,role_id) VALUES (?,?)')
 })
 
+test('保留字不重复包裹：已有反引号的 interval 不再变 ``interval``', () => {
+  // UPDATE quota_costs SET "interval" = ? 这类：先 "interval"→`interval`，保留字规则不能再包一层
+  const out = fixQuotes('UPDATE quota_costs SET "interval" = ?, `key` = ?')
+  assert.ok(!out.includes('``'), `不应出现双反引号: ${out}`)
+  assert.match(out, /`interval` = \?/)
+  assert.match(out, /`key` = \?/)
+})
+
 test('表名映射：sessions → auth_sessions, plans → quota_plans', () => {
   const out = translate('SELECT * FROM sessions WHERE jti = ?')
   assert.match(out, /FROM auth_sessions/)

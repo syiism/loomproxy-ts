@@ -69,6 +69,19 @@ export function buildServer(deps: ApiDeps): FastifyInstance {
     },
   })
 
+  // 兜底错误脱敏：未捕获异常（尤其 store 抛出的 SQL/上游错误）在 5xx 时只回统一文案，
+  // 完整错误进日志供排查，绝不把内部 SQL/堆栈透给前端。4xx（fail() 主动回的）保持原样。
+  app.setErrorHandler((err: unknown, req, reply) => {
+    const e = err as { statusCode?: number; name?: string; message?: string }
+    const status = e.statusCode && e.statusCode >= 400 && e.statusCode < 500 ? e.statusCode : 500
+    if (status >= 500) {
+      req.log.error({ err }, 'unhandled error')
+      void reply.code(500).send({ statusCode: 500, error: 'Internal Server Error', message: '服务内部错误，请稍后重试' })
+      return
+    }
+    void reply.code(status).send({ statusCode: status, error: e.name ?? 'Error', message: e.message ?? '' })
+  })
+
   app.addHook('onRequest', async (req, reply) => {
     reply.header('x-request-id', req.id)
   })

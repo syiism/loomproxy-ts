@@ -39,6 +39,9 @@ export function fixQuotes(sql: string): string {
   for (const word of ['key', 'interval']) {
     out = out.replace(new RegExp(`\\b${word}\\b`, 'gi'), (m, off: number, s: string) => {
       const before = s.slice(0, off)
+      const after = s.slice(off + m.length)
+      // 已被引号包住的（上一步 "interval" → `interval`）不再包，否则会变成 ``interval``
+      if (before.endsWith('`') && after.startsWith('`')) return m
       // 不动 ON DUPLICATE KEY UPDATE / PRIMARY KEY 里的关键字
       if (/ON\s+DUPLICATE\s+$/i.test(before) || /PRIMARY\s+$/i.test(before)) return m
       return `\`${word}\``

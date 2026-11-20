@@ -62,7 +62,8 @@ export class MysqlDb implements Database {
     const len = Atomics.load(this.ctrl, 1)
     const isErr = Atomics.load(this.ctrl, 2) === 1
     const text = Buffer.from(this.bytes.buffer, this.bytes.byteOffset, len).toString('utf8')
-    if (isErr) throw new Error(`MySQL 查询失败: ${text}\nSQL: ${sql}`)
+    // 不把 SQL 拼进错误：SQL 结构属内部实现，且可能含签名/参数痕迹。全局错误处理器已对 5xx 兜底脱敏。
+    if (isErr) throw new Error(`MySQL 查询失败: ${text.slice(0, 200)}`)
     const payload = JSON.parse(text) as { rows?: Row[]; changes?: number; lastInsertRowid?: number }
     if (kind === 'run') return { changes: payload.changes ?? 0, lastInsertRowid: payload.lastInsertRowid ?? 0 } as T
     const rows = (payload.rows ?? []).map((row) => {
