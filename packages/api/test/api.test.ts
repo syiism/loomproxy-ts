@@ -352,6 +352,24 @@ test('插件管理：要管理员；reload 生效且 /datasources 跟着变；ro
   }
 })
 
+test('静态字典：/data/:source/:name 兼容带 .json 后缀的 URL', async () => {
+  const { app, root } = await makeApp()
+  try {
+    const dir = join(root, 'data', 'demo_one')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'cats.json'), '{"a":1}')
+    const bare = await app.inject({ method: 'GET', url: '/data/demo_one/cats' })
+    const withExt = await app.inject({ method: 'GET', url: '/data/demo_one/cats.json' })
+    assert.equal(bare.statusCode, 200)
+    assert.equal(withExt.statusCode, 200)
+    assert.deepEqual(bare.json(), withExt.json())
+    assert.deepEqual(bare.json(), { a: 1 })
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('静态字典：缺文件 404 且不列清单', async () => {
   const { app, root } = await makeApp()
   try {

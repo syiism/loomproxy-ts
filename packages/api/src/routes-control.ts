@@ -152,7 +152,9 @@ export function registerControlRoutes(app: FastifyInstance, deps: ControlDeps): 
       const files = fileInfos(root, source)
       return ok({ source, count: files.length, files })
     }
-    const target = normalize(join(root, source, `${name}.json`))
+    // 兼容带 .json 后缀的 URL：路由本身会拼 .json，重复后缀会变成 x.json.json 而 404
+    const bareName = name.replace(/\.json$/i, '')
+    const target = normalize(join(root, source, `${bareName}.json`))
     if (!target.startsWith(`${root}/`) || !existsSync(target)) {
       reply.code(404).send({ error: 'not found' })
       return
