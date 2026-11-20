@@ -5,14 +5,17 @@ export function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 }
 
-// 时间按 UTC 显示：接口返回的 ISO、DB 的 created_at、Go 服务端日志都是 UTC，
-// 三者口径一致。不用浏览器本地时区（不同时区浏览器显示会差几小时）。
+import { getTzOffset } from './api/client.js'
+
+// 时间按平台时区（后端 x-tz-offset，默认 UTC+8）显示，不用浏览器本地时区——
+// 与 Go 面板原版行为一致（显示北京时间），且在任何时区的浏览器上都稳定。
 export function fmtDate(s) {
   if (!s) return '—'
   const d = new Date(s)
   if (isNaN(d)) return s
+  const shifted = new Date(d.getTime() + getTzOffset() * 3600_000)
   const pad = n => String(n).padStart(2, '0')
-  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`
+  return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())} ${pad(shifted.getUTCHours())}:${pad(shifted.getUTCMinutes())}`
 }
 
 // 角色代码 → 淡彩色调
