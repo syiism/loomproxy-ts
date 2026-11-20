@@ -13,8 +13,8 @@
    `omitempty` → `undefined`（不是 `null`）、字段名逐字照抄。改任何一条都算破坏前端（① §1）。
 4. **Node strip-only 语法**：不用 `enum` / `namespace` / 构造器参数属性 / 装饰器。
    类型导入一律 `import type`（`verbatimModuleSyntax`）。
-5. **源包只做试点**：目前有两个——`packages/plugins/fq_novel`（协议层复用外部实现）与
-   `packages/plugins/sq_novel`（Legado JS 源**转写**：算法/常量对齐参考实现，用黄金值用例钉住）。
+5. **源包只做试点**：目前有两个——`packages/sources/fq_novel`（协议层复用外部实现）与
+   `packages/sources/sq_novel`（Legado JS 源**转写**：算法/常量对齐参考实现，用黄金值用例钉住）。
    新源照这个结构（一源一包、`manifest.json` 是唯一声明位、映射逻辑进 `src/normalize.ts` 且可单测、
    宿主用 `packages/source-host/test/fixtures/*` 夹具验证）。
    **完整编写范式见 `docs/方案/源插件编写范式.md`**（目录结构/manifest 字段表/三种转写形态/测试与上线清单）。
@@ -41,7 +41,7 @@ pnpm run check     # 分层 + tsc + 面板构建 + 全部用例
 | `gate` | 六档访问判定顺序、双维限流、去重窗口 |
 | `source-host` | 扫描/reload/rollback/drain/卸载 + 四种坏插件各留记录且不拖垮别人 |
 | `api` | 信封形状、参数注入规则、必填参数 400、未知源 404、插件管理要管理员 |
-| `packages/plugins/*` | 映射纯函数用例（不连网）+ `node tools/plugin-run.mjs <code> <action>` 实网跑通一个动作 |
+| `packages/sources/*` | 映射纯函数用例（不连网）+ `node tools/plugin-run.mjs <code> <action>` 实网跑通一个动作 |
 | `apps/server` | `compose()` 起得来：无插件目录也能起，有插件立即可派发 |
 
 ## 4. 插件（源包）的三步跑通

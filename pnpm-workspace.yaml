@@ -7,6 +7,6 @@ packages:
   - "packages/gate"
   - "packages/source-host"
   - "packages/api"
-  - "packages/plugins/*"
+  - "packages/sources/*"
   - "apps/*"
   - "web"

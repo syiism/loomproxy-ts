@@ -19,6 +19,7 @@ const LAYER = {
   'source-host': 3,
   api: 4,
   plugins: 4,
+  sources: 4,
   server: 5,
 }
 
@@ -34,6 +35,7 @@ const ALLOW = {
   api: ['contract', 'kernel', 'store', 'source-kit', 'gate', 'source-host', 'pool'],
   // 插件（源包）只认 SDK：不许 import store/gate/api/server，也不许互相 import（同族共享包例外，后续登记）
   plugins: ['contract', 'kernel', 'source-kit'],
+  sources: ['contract', 'kernel', 'source-kit'],
   server: ['contract', 'kernel', 'store', 'source-kit', 'gate', 'source-host', 'pool', 'api'],
 }
 
@@ -52,6 +54,7 @@ function pkgOf(file) {
   const rel = relative(ROOT, file)
   const parts = rel.split('/')
   if (parts[0] === PKG && parts[1] === 'plugins') return 'plugins'
+  if (parts[0] === PKG && parts[1] === 'sources') return 'sources'
   if (parts[0] === PKG) return parts[1]
   if (parts[0] === APP) return 'server'
   return undefined
@@ -85,7 +88,7 @@ for (const top of [PKG, APP]) {
   if (!existsSync(topDir)) continue
   for (const entry of readdirSync(topDir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue
-    const ours = top === APP ? 'server' : entry.name === 'plugins' ? 'plugins' : entry.name
+    const ours = top === APP ? 'server' : entry.name === 'plugins' ? 'plugins' : entry.name === 'sources' ? 'sources' : entry.name
     const allow = ALLOW[ours]
     if (!allow) {
       report(`未在分层表里登记的包：${top}/${entry.name}（先登记层级再写代码）`)

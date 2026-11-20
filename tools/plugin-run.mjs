@@ -17,7 +17,7 @@ if (!code || !action) {
 }
 
 const root = new URL('..', import.meta.url).pathname
-const dir = join(root, 'packages', 'plugins', code)
+const dir = join(root, 'packages', 'sources', code)
 const manifestPath = join(dir, 'manifest.json')
 if (!existsSync(manifestPath)) {
   console.error(`没有这个插件: ${dir}`)

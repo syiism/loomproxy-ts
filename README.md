@@ -29,13 +29,13 @@ packages/source-kit L2′ 源作者 SDK + 插件 manifest schema + 注册表 + �
 packages/gate       L3  访问判定 / 计费 / 限流
 packages/source-host L3 插件宿主：扫描 / manifest 校验 / 换代 / drain / 回滚
 packages/api        L4′ Fastify 装配：控制面路由 + /:source/:action 派发
-packages/plugins/*  L4  源包（一源一包）：manifest.json + src/index.ts，只依赖 contract/kernel/source-kit
+packages/sources/*  L4  源包（一源一包）：manifest.json + src/index.ts，只依赖 contract/kernel/source-kit
 apps/server         L5  进程入口（compose → listen → 停机），装配顺序的唯一出处
 web                 —  **原 Go 项目面板原样搬入**（Vue3 + Vite，7814 行），只补了「源插件」一页与
                       api 方法、monitor 的 plugin_version 筛选；产物 web/dist 由 server 托管
 ```
 
-**已落地的源包**：`packages/plugins/fq_novel`（番茄小说，搜索/详情/目录/正文四动作，实网跑通）。
+**已落地的源包**：`packages/sources/fq_novel`（番茄小说，搜索/详情/目录/正文四动作，实网跑通）。
 
 依赖矩阵与禁反向依赖的规则在 `tools/check-layers.mjs`（`pnpm check:layers`）。
 
@@ -91,7 +91,7 @@ Node 24 直接跑 `.ts`（type stripping），所以**用例不需要构建**；
 
 ## 外部依赖（fq_novel 试点）
 
-`packages/plugins/fq_novel` **不自己实现签名/加密/会话池**，它把
+`packages/sources/fq_novel` **不自己实现签名/加密/会话池**，它把
 `/home/muyang/work/novels/fanq`（维护者的番茄协议参考实现，ESM）当协议层动态 import：
 
 | 环境变量 | 默认 | 说明 |
@@ -100,7 +100,7 @@ Node 24 直接跑 `.ts`（type stripping），所以**用例不需要构建**；
 | `FQ_SESSION_POOL` | `DATA_DIR/_runtime/fq_novel/fq-sessions.json` | 设备会话池。首次运行从协议树拷一份种子（5 台已注册设备）；**刻意不放 `DATA_DIR/fq_novel/`**，否则 `/data` 会把它当成静态字典列出来 |
 | `FQ_POOL_MAX` | `5` | 协议层自己的会话池上限 |
 
-`packages/plugins/sq_novel`（书旗小说）是**转写**而不是复用：它的协议（App 加密口的签名/keystream/正文解码）
+`packages/sources/sq_novel`（书旗小说）是**转写**而不是复用：它的协议（App 加密口的签名/keystream/正文解码）
 在 `src/protocol.ts` 里自带实现，来源是 Legado 书源「书旗-轻页(阅读)」的 jsLib
 （`/home/muyang/work/legado-suite/legado-work/work/书旗-轻页/src/jslib.js`）。
 转写口径：**算法与常量逐字节对齐**（`test/protocol.test.ts` 用参考实现跑出的黄金值钉住），
