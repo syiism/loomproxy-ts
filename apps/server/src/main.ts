@@ -78,10 +78,11 @@ async function main(): Promise<void> {
   })()
   if (activated !== undefined) {
     await app.ready()
-    // Fastify 的 listen 不接 fd：直接把底层 http.Server 挂到继承来的 fd 上
+    // Node 的 server.listen(number) 是"端口"，不是 fd；接 systemd 继承的 fd 必须用 { fd } 对象形式，
+    // 否则会去监听端口 3（非特权用户 EACCES，或误占别的端口）。
     await new Promise<void>((resolve, reject) => {
       app.server.once('error', reject)
-      app.server.listen(activated, () => resolve())
+      app.server.listen({ fd: activated }, () => resolve())
     })
     console.log('[loomproxy] listening on systemd-activated fd（面板 /panel）')
   } else {

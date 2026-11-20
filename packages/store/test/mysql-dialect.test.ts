@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { translateUpsert, fixQuotes, translate, mapColumns, isoToMysql, mysqlToIso, apiKeyRevokeToDelete, appUpsert } from '../src/mysql-dialect.ts'
+import { translateUpsert, fixQuotes, translate, mapColumns, isoToMysql, mysqlToIso, apiKeyRevokeToDelete, appUpsert, overrideQueryFix } from '../src/mysql-dialect.ts'
 
 test('upsert：ON CONFLICT + excluded → ON DUPLICATE KEY + VALUES', () => {
   const sql = `INSERT INTO blocked_ips (ip, reason) VALUES (?,?) ON CONFLICT(ip) DO UPDATE SET reason = excluded.reason`

@@ -23,6 +23,9 @@ const SUBJECT_DIM_COLUMNS: Record<
 
 export class DbSettings implements SettingsStore {
   private readonly db: Database
+  // 敏感键集合：来自声明位（SettingDecl.sensitive），与 Go 的 SensitiveSettingKeys 同口径。
+  // 不依赖 DB 的 sensitive 列——线上 MySQL 的 system_settings 没有这一列（Go 也用内存集合）。
+  private readonly sensitive = new Set<string>()
 
   constructor(db: Database) {
     this.db = db
@@ -32,14 +35,15 @@ export class DbSettings implements SettingsStore {
   register(decls: SettingDecl[]): void {
     for (const d of decls) {
       if (!isValidSettingType(d.type)) throw new Error(`设置项 ${d.key} 的 type 非法: ${d.type}`)
+      if (d.sensitive) this.sensitive.add(d.key)
       const cur = this.db.get<{ id: number }>('SELECT id FROM system_settings WHERE key = ?', d.key)
       if (cur) {
-        this.db.run('UPDATE system_settings SET type = ?, description = ?, sensitive = ? WHERE key = ?',
-          d.type, d.description, boolInt(!!d.sensitive), d.key)
+        this.db.run('UPDATE system_settings SET type = ?, description = ? WHERE key = ?',
+          d.type, d.description, d.key)
       } else {
         this.db.run(
-          'INSERT INTO system_settings (key, value, type, description, sensitive, updated_at) VALUES (?,?,?,?,?,?)',
-          d.key, d.default, d.type, d.description, boolInt(!!d.sensitive), nowIso(),
+          'INSERT INTO system_settings (key, value, type, description, updated_at) VALUES (?,?,?,?,?)',
+          d.key, d.default, d.type, d.description, nowIso(),
         )
       }
     }
@@ -82,45 +86,47 @@ export class DbSettings implements SettingsStore {
 
   /** 未注册的键拒绝写入（与内存版同口径：设置项必须先在声明位/面板登记） */
   set(key: string, value: string): void {
-    const cur = this.db.get<{ sensitive: number }>('SELECT sensitive FROM system_settings WHERE key = ?', key)
+    const cur = this.db.get<{ id: number }>('SELECT id FROM system_settings WHERE key = ?', key)
     if (!cur) throw new Error(`设置项 ${key} 未注册，拒绝写入`)
-    if (bool(cur.sensitive) && value === '') return
+    if (this.sensitive.has(key) && value === '') return
     this.db.run('UPDATE system_settings SET value = ?, updated_at = ? WHERE key = ?', value, nowIso(), key)
   }
 
   /** 面板用：创建/改说明（与 Go 版 admin/settings 的写入同一张表） */
   upsertRaw(input: { key: string; value: string; type: string; description: string; sensitive?: boolean }): void {
     if (!isValidSettingType(input.type)) throw new Error(`设置项类型非法: ${input.type}`)
+    if (input.sensitive) this.sensitive.add(input.key)
     const cur = this.db.get<{ id: number }>('SELECT id FROM system_settings WHERE key = ?', input.key)
     if (cur) {
-      this.db.run('UPDATE system_settings SET value = ?, type = ?, description = ?, sensitive = ?, updated_at = ? WHERE key = ?',
-        input.value, input.type, input.description, boolInt(!!input.sensitive), nowIso(), input.key)
+      this.db.run('UPDATE system_settings SET value = ?, type = ?, description = ?, updated_at = ? WHERE key = ?',
+        input.value, input.type, input.description, nowIso(), input.key)
     } else {
       this.db.run(
-        'INSERT INTO system_settings (key, value, type, description, sensitive, updated_at) VALUES (?,?,?,?,?,?)',
-        input.key, input.value, input.type, input.description, boolInt(!!input.sensitive), nowIso(),
+        'INSERT INTO system_settings (key, value, type, description, updated_at) VALUES (?,?,?,?,?)',
+        input.key, input.value, input.type, input.description, nowIso(),
       )
     }
   }
 
   remove(key: string): boolean {
+    this.sensitive.delete(key)
     return this.db.run('DELETE FROM system_settings WHERE key = ?', key).changes > 0
   }
 
   list(): SettingRow[] {
-    return this.db.all<{ key: string; value: string; type: string; sensitive: number; description: string }>(
-      'SELECT key, value, type, sensitive, description FROM system_settings ORDER BY key',
+    return this.db.all<{ key: string; value: string; type: string; description: string }>(
+      'SELECT key, value, type, description FROM system_settings ORDER BY key',
     ).map((r) => ({
       key: r.key,
-      value: bool(r.sensitive) ? '' : r.value,
+      value: this.sensitive.has(r.key) ? '' : r.value,
       type: r.type as SettingType,
       description: r.description,
-      sensitive: bool(r.sensitive),
+      sensitive: this.sensitive.has(r.key),
     })) as SettingRow[]
   }
 
   sensitiveKeys(): string[] {
-    return this.db.all<{ key: string }>('SELECT key FROM system_settings WHERE sensitive = 1').map((r) => r.key)
+    return [...this.sensitive].sort()
   }
 }
 

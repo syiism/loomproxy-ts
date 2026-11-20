@@ -4,7 +4,7 @@
 import { Worker } from 'node:worker_threads'
 import { SqliteDb } from './sqlite.ts'
 import type { Database, Row, SqlValue } from './sqlite.ts'
-import { translate, mapColumns, isoToMysql, mysqlToIso, apiKeyRevokeToDelete, appUpsert, systemSettingsFix, dropColumns } from './mysql-dialect.ts'
+import { translate, mapColumns, isoToMysql, mysqlToIso, apiKeyRevokeToDelete, appUpsert, systemSettingsFix, dropColumns, overrideQueryFix } from './mysql-dialect.ts'
 
 export type MysqlConfig = {
   host: string
@@ -80,11 +80,14 @@ export class MysqlDb implements Database {
   private exec<T>(sql: string, params: SqlValue[], kind: 'get' | 'all' | 'run'): T {
     // 逐表列差异：去掉 MySQL 不存在的列、重命名列（都在翻译前做，保证参数顺序对齐）
     const sf = systemSettingsFix(sql, params)
-    const ds = dropColumns(sf.sql, sf.params, 'data_sources', ['media_type'])
+    const oq = overrideQueryFix(sf.sql, sf.params)
+    const ds = dropColumns(oq.sql, oq.params, 'data_sources', ['media_type'])
     // api_call_logs.plugin_version：TS/Go 规划列，本机 MySQL 结构无此列，写入时丢弃（读侧 ?? '' 兜底）
     const cl = dropColumns(ds.sql, ds.params, 'api_call_logs', ['plugin_version'])
-    let out = translate(cl.sql)
-    let p = cl.params
+    // quota_usage_logs.username：线上表无此列（冗余展示列，不影响计费），写入时丢弃
+    const ul = dropColumns(cl.sql, cl.params, 'quota_usage_logs', ['username'])
+    let out = translate(ul.sql)
+    let p = ul.params
     // jti → session_id 只在 sessions/auth_sessions 相关语句出现（TS 仅此一处用 jti）
     if (/\bauth_sessions\b|\bsessions\b/.test(out)) out = mapColumns(out, 'auth_sessions')
     // blocked_ips：TS reason → MySQL note

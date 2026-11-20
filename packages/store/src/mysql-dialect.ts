@@ -224,6 +224,22 @@ export function dropColumns(
   return { sql: out, params: p }
 }
 
+/**
+ * user_quota_overrides 的读/删查询：TS 用 (scope,target)，线上 MySQL 只有 group_code（scope 恒为 source）。
+ * effectiveLimit 的 `WHERE scope = ? AND target IN (?, '*')` → `WHERE group_code IN (?, '*')`，
+ * 并去掉 scope 对应的那个参数（固定值 'source'）。
+ */
+export function overrideQueryFix(sql: string, params: SqlValue[]): { sql: string; params: SqlValue[] } {
+  if (!/\buser_quota_overrides\b/i.test(sql)) return { sql, params }
+  // 只处理 SELECT / DELETE（INSERT 由 appUpsert 处理，SELECT * 由反向列映射处理）
+  if (/scope\s*=\s*\?\s+AND\s+target\s+IN/i.test(sql)) {
+    const out = sql.replace(/\bscope\s*=\s*\?\s+AND\s+target\s+IN/i, 'group_code IN')
+    // 参数顺序：user_id, scope('source'), target, ... → 去掉 scope
+    return { sql: out, params: params.filter((_, i) => i !== 1) }
+  }
+  return { sql, params }
+}
+
 // ---- 日期格式：TS 用 ISO（...T...Z），MySQL datetime 用 'YYYY-MM-DD HH:mm:ss.SSS' ----
 // 迁移工具用 toIso 把 MySQL 墙钟当 UTC（仅 ' '→'T' 加 'Z'），这里保持同一约定，保证读数一致。
 const ISO_RE = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}(?:\.\d+)?)(Z|[+-]\d{2}:\d{2})$/
