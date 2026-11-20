@@ -196,6 +196,15 @@ importers:
         specifier: workspace:*
         version: link:../../source-kit
 
+  packages/plugins/qq_luomu:
+    dependencies:
+      '@loomproxy/contract':
+        specifier: workspace:*
+        version: link:../../contract
+      '@loomproxy/source-kit':
+        specifier: workspace:*
+        version: link:../../source-kit
+
   packages/plugins/sq_novel:
     dependencies:
       '@loomproxy/contract':
