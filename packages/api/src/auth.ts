@@ -131,7 +131,11 @@ export async function resolveIdentity(req: FastifyRequest, cfg: Config, deps: Id
     // env 静态键：匿名凭证（控制面要拒绝它，数据面放行）
     if (cfg.apiKeys.includes(key)) return { roles: [], envKey: true }
     const owner = deps.apiKeys?.ownerOf(key)
-    if (owner) return { userId: owner.user_id, roles: [], envKey: false }
+    if (owner) {
+      // API Key 认证也要带 username：否则明细会把调用者写成 #user_id（监控页那串 #1359 的来源）
+      const u = deps.users?.byId(owner.user_id)
+      return { userId: owner.user_id, ...(u?.username ? { username: u.username } : {}), roles: [], envKey: false }
+    }
   }
   return ANONYMOUS
 }

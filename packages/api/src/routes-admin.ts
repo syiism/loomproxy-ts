@@ -22,6 +22,12 @@ type Deps = { config: Config; stores: ApiStores; dataSources?: DataSourceStore; 
 // 但起点语义一致（本次服务进程开始统计的时刻），重启会刷新——面板文案的"重启清零"口径对这部分成立。
 const MONITOR_STARTED_AT = new Date().toISOString()
 
+/** 明细里的 #user_id 兜底 → 查 users 补真实名（API Key 调用的历史行） */
+function displayName(username: string, names: Map<number, string>): string {
+  const m = /^#(\d+)$/.exec(username)
+  return m ? (names.get(Number(m[1])) ?? username) : (username || '')
+}
+
 async function requireAdmin(req: FastifyRequest, reply: FastifyReply, deps: Deps) {
   const id = await resolveIdentity(req, deps.config, {
     ...(deps.stores.sessions ? { sessions: deps.stores.sessions } : {}),
@@ -861,7 +867,40 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
       }
     })
     const failed = total - success
-    const recent = (stores.callLogs?.page({ page: 1, pageSize: 50 })?.list ?? []).slice(0, 50)
+    // 面板「最近调用」读 Go 的 RecentCall 形状：time/username/media 等；TS 明细行是
+    // created_at/media_type，字段名不同会导致时间空、媒介空。这里按 Go 字段名对齐。
+    // 老数据里 API Key 调用的 username 被写成 #user_id，查 users 补真实名（新数据已在 auth.ts 源头修）。
+    const rawRecent = (stores.callLogs?.page({ page: 1, pageSize: 50 })?.list ?? []).slice(0, 50)
+    const idNames = new Map<number, string>()
+    for (const r of rawRecent) {
+      const m = /^#(\d+)$/.exec(r.username)
+      if (m) {
+        const uid = Number(m[1])
+        if (!idNames.has(uid)) {
+          const u = stores.users?.byId(uid)
+          if (u?.username) idNames.set(uid, u.username)
+        }
+      }
+    }
+    const recent = rawRecent.map((r) => ({
+      time: r.created_at,
+      username: displayName(r.username, idNames),
+      ip: r.ip || '',
+      source: r.source,
+      action: r.action,
+      status: r.status,
+      in_band_error: r.in_band_error,
+      in_band_reason: r.in_band_reason,
+      in_band_code: r.in_band_code,
+      latency_ms: r.latency_ms,
+      keyword: r.keyword,
+      book_name: r.book_name,
+      chapter_title: r.chapter_title,
+      book_ident: r.book_ident,
+      chapter_ident: r.chapter_ident,
+      media: r.media_type,
+      result_count: r.result_count,
+    }))
     return ok({
       started_at: MONITOR_STARTED_AT,
       total,

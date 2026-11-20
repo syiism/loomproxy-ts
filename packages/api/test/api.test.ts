@@ -246,6 +246,11 @@ test('/admin/monitor 回完整形状（面板 overview/items/recent），不是 
     assert.equal(typeof d['success_rate'], 'number')
     assert.ok(Array.isArray(d['items']))
     assert.ok(Array.isArray(d['recent']))
+    // 最近调用按 Go 的 RecentCall 形状：time/username/media（不是 created_at/media_type）
+    const rc = (d['recent'] as Array<Record<string, unknown>>)[0]!
+    assert.ok('time' in rc && typeof rc['time'] === 'string', '最近调用要有 time 字段')
+    assert.ok('username' in rc, '最近调用要有 username 字段')
+    assert.ok('media' in rc, '最近调用要有 media 字段')
     const item = (d['items'] as Array<Record<string, unknown>>)[0]!
     for (const k of ['source', 'action', 'total', 'success', 'failed', 'success_rate', 'avg_latency_ms', 'max_latency_ms', 'lifetime', 'last_called_at']) {
       assert.ok(k in item, `monitor item 缺字段 ${k}`)
