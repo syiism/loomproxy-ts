@@ -1,6 +1,11 @@
 // HTTP 客户端：统一 token 注入、错误规范化、401 处理
 export const TOKEN_KEY = 'loomproxy_token'
 
+// 平台时区偏移（后端 x-tz-offset header）：面板所有时间按此格式化，与浏览器时区无关。
+// 默认 8（与服务端 kernel/clock 的默认 TZ_OFFSET_HOURS 一致），首次请求后由 header 覆盖。
+let tzOffsetHours = 8
+export function getTzOffset() { return tzOffsetHours }
+
 export function getToken() { return localStorage.getItem(TOKEN_KEY) || '' }
 export function setToken(t) { localStorage.setItem(TOKEN_KEY, t) }
 export function clearToken() { localStorage.removeItem(TOKEN_KEY) }
@@ -43,6 +48,9 @@ export async function request(path, { method = 'GET', body, query, headers: extr
   } catch (e) {
     throw new ApiError('网络错误，请检查连接后重试', 0)
   }
+  // 同步平台时区（每个响应都带；header 缺失时保留上次值/默认）
+  const tzHdr = res.headers.get('x-tz-offset')
+  if (tzHdr !== null && Number.isFinite(Number(tzHdr))) tzOffsetHours = Number(tzHdr)
 
   let payload = null
   try { payload = await res.json() } catch (e) { /* 非 JSON 响应 */ }

@@ -313,9 +313,28 @@ export function registerAccountRoutes(app: FastifyInstance, deps: AdminContext):
     const qs = req.query as Record<string, string>
     const page = clampPage(qs['page'])
     const pageSize = clampPageSize(qs['page_size'])
-    const db = (stores.users as unknown as { db?: unknown })?.db as never
-    void db
-    const rows = stores.devices?.page({ page, pageSize, ...(qs['keyword'] ? { keyword: qs['keyword'] } : {}) })
-    return ok(rows ?? { total: 0, page: 1, page_size: pageSize, list: [] })
+    // 统计窗口起点与标红阈值来自设置项（与 Go 的 device_watch 同口径）
+    const windowDays = stores.settings?.getInt('device_watch_window_days', 7) ?? 7
+    const suspectIps = stores.settings?.getInt('suspect_distinct_ips', 8) ?? 8
+    const windowStartIso = new Date(Date.now() - Math.max(1, windowDays) * 86_400_000).toISOString()
+    const rows = stores.devices?.page({
+      page, pageSize,
+      ...(qs['keyword'] ? { keyword: qs['keyword'] } : {}),
+      ...(qs['sort'] ? { sort: qs['sort'] } : {}),
+      ...(qs['dir'] ? { dir: qs['dir'] } : {}),
+      windowStartIso,
+      suspectIps,
+    })
+    if (!rows) return ok({ total: 0, page: 1, page_size: pageSize, list: [], sort: 'sessions', dir: 'desc' })
+    return ok({
+      ...rows,
+      // 口径随读数下发：面板上"N 个 IP 算不算异常"取决于当时的阈值与开关
+      config: {
+        device_watch_enabled: stores.settings?.getBool('device_watch_enabled', false),
+        max_active_sessions: stores.settings?.getInt('max_active_sessions', 5),
+        suspect_distinct_ips: suspectIps,
+        window_days: windowDays,
+      },
+    })
   })
 }
