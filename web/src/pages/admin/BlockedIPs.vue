@@ -1,6 +1,6 @@
 <template>
   <div>
-    <PageHeader title="IP 拉黑" subtitle="被拉黑的 IP 无法登录、注册，也无法调用任何接口；下方另列当前的登录限频锁定（进程内存，与黑名单是两件事）。" />
+    <PageHeader title="IP 拉黑" subtitle="拉黑 IP 禁止登录、注册与调用接口；下方为登录限频锁定（与黑名单独立）。" />
 
     <div class="reveal flex flex-col sm:flex-row gap-3 mb-6">
       <input v-model="form.ip" placeholder="IP 地址（IPv4 / IPv6）" class="input sm:w-64 font-mono" @keydown.enter="add">

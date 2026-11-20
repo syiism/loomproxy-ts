@@ -1,6 +1,6 @@
 <template>
   <div>
-    <PageHeader title="接口管理" subtitle="配置接口消耗和速率限制。默认值由「默认」Tab 编辑，每个套餐可通过「按套餐」Tab 单独覆盖。限流口径：窗口计数（如 30 次/60 秒，允许突发），填 0 为不限。库里另有「固定间隔（每 N 秒 1 次，不可突发）」这一档仍存在且优先度低于窗口计数，但面板不再提供输入框（待办清单 P119 ③），已有的值会继续生效并照常显示。" />
+    <PageHeader title="接口管理" subtitle="配置接口消耗与限流：「默认」Tab 设全局值，「按套餐」Tab 单独覆盖。限流为窗口计数（0=不限）；旧固定间隔档已隐藏但仍生效。" />
 
     <UiSpinner v-if="loading" />
     <UiEmpty v-else-if="error" title="加载失败" :text="error" />

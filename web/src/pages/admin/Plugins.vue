@@ -2,7 +2,7 @@
   <div>
     <PageHeader
       title="源插件"
-      subtitle="数据源以插件包形式加载：plugins/<源码>/<版本>/。reload 换到最新版本、rollback 回上一代、disable 只翻状态（历史行保留）、unload 摘注册表——全程不重启进程；在飞请求会在换代时被等完。"
+      subtitle="插件包位于 plugins/<源码>/<版本>/；reload 换代、rollback 回退、disable 翻状态、unload 摘注册，均不重启进程。"
     />
 
     <div class="reveal flex flex-wrap items-center gap-4 mb-6">

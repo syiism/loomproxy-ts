@@ -1,6 +1,6 @@
 <template>
   <div>
-    <PageHeader title="设备与密钥" subtitle="按账号看近期的登录设备、来源 IP 与密钥数量。这一页只给读数；自动处置只在登录时按「活跃会话数」发生，IP 数再多也不踢人。" />
+    <PageHeader title="设备与密钥" subtitle="按账号看登录设备、IP 与密钥数（只读）；自动处置仅在登录时按活跃会话数触发。" />
 
     <!-- 口径跟着读数走：「8 个 IP 算不算异常」取决于当时配的阈值与开关，不写出来这页就没法读 -->
     <div v-if="cfg" class="reveal card p-4 mb-6 text-sm leading-relaxed">

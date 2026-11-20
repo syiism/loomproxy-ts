@@ -1,6 +1,6 @@
 <template>
   <div>
-    <PageHeader title="号池" subtitle="数据源凭证池运行状态。墙钟燃烧型按冷热续领维持活跃号，用量摊薄型把请求轮询到全部可用号上、被风控的号临时冷却而非判死。底座项目未接入数据源时列表为空。" />
+    <PageHeader title="号池" subtitle="凭证池状态：墙钟型按冷热续领，摊薄型轮询全部可用号、风控号临时冷却；未接入数据源时为空。" />
 
     <div class="reveal flex items-center gap-4 mb-6">
       <button @click="load" class="btn-ghost btn-sm">刷新</button>

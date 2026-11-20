@@ -1,6 +1,6 @@
 <template>
   <div>
-    <PageHeader title="接口监控" subtitle="数据源接口调用统计。内存计数，服务重启后清零，与额度计费无关；近 7 天趋势请点「生成报表」——那是明细口径，与本页的内存计数不是同一个窗口。" />
+    <PageHeader title="接口监控" subtitle="接口调用统计（重启清零，与计费无关）；近 7 天趋势见「生成报表」。" />
 
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6 reveal">
       <div class="card !p-4">

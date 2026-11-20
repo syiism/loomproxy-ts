@@ -1,6 +1,6 @@
 <template>
   <div>
-    <PageHeader title="数据源管理" subtitle="管理数据源的启用/禁用与基础信息、榜单可见与平台默认地址；每个源显示它被几个套餐纳入（只读），套餐访问权限在「额度 · 套餐」页管理。" />
+    <PageHeader title="数据源管理" subtitle="管理数据源启停、榜单可见与默认地址；套餐授权数只读，授权在「额度 · 套餐」页管理。" />
 
     <!-- 数据源列表 -->
     <section class="mb-12 md:mb-16 reveal">
