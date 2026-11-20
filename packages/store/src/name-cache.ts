@@ -3,7 +3,7 @@
 //
 // **章节键必须是"书+章"的复合键**：章节标识多数只在书内唯一，只用 itemId 会把 A 书的
 // 第 3 章标题填进 B 书的第 3 章（Go 的 chapterIdentKey 同口径）。复合键的拼法只在这里出现一次。
-import { SqliteDb, nowIso } from './sqlite.ts'
+import { type Database, nowIso } from './sqlite.ts'
 
 const CHAPTER_KEY_SEP = '|'
 
@@ -12,9 +12,9 @@ function chapterKey(bookIdent: string, ident: string): string {
 }
 
 export class DbNameCache {
-  private readonly db: SqliteDb
+  private readonly db: Database
 
-  constructor(db: SqliteDb) {
+  constructor(db: Database) {
     this.db = db
   }
 
@@ -60,6 +60,34 @@ export class DbNameCache {
          FROM name_cache`,
     )
     return { books: Number(row?.books ?? 0), chapters: Number(row?.chapters ?? 0) }
+  }
+
+  /**
+   * 从调用历史反向重建命名缓存：明细里本就带着 book_name/chapter_title（源响应里攒下的），
+   * 按标识提取成唯一映射写回 name_cache。用于迁移/切流后恢复——既能回填历史明细，
+   * 也能让后续 lookupBook/lookupChapter 立刻命中。content_withheld=1 的行已抹掉标识，跳过。
+   * 返回新增的 book/chapter 映射数（幂等：已存在的键只更新，不重复计数）。
+   */
+  recoverFromLogs(): { books: number; chapters: number } {
+    const books = this.db.run(
+      `INSERT INTO name_cache (kind, source, ident, name, updated_at)
+        SELECT 'book', source, book_ident, MAX(book_name), ?
+          FROM api_call_logs
+         WHERE book_ident <> '' AND book_name <> '' AND content_withheld = 0
+         GROUP BY source, book_ident
+        ON CONFLICT(kind, source, ident) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at`,
+      nowIso(),
+    ).changes
+    const chapters = this.db.run(
+      `INSERT INTO name_cache (kind, source, ident, name, updated_at)
+        SELECT 'chapter', source, book_ident || '${CHAPTER_KEY_SEP}' || chapter_ident, MAX(chapter_title), ?
+          FROM api_call_logs
+         WHERE book_ident <> '' AND chapter_ident <> '' AND chapter_title <> '' AND content_withheld = 0
+         GROUP BY source, book_ident, chapter_ident
+        ON CONFLICT(kind, source, ident) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at`,
+      nowIso(),
+    ).changes
+    return { books, chapters }
   }
 
   /**

@@ -1,9 +1,10 @@
 // 仓库层（SQLite 实现）：每个 Repo 对应一张表/一组表，接口与内存实现同名同义。
 // 面板读的字段形状（user.plan / user.roles[].code / u.deleted_at …）在这里一次定死。
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
+import { compareSync as bcryptCompare } from 'bcryptjs'
 import type { CallLogPage, CallLogQuery, CallLogRow, SettingDecl, SettingType, SourceMeta } from '@loomproxy/contract'
 import { isValidSettingType } from '@loomproxy/contract'
-import { SqliteDb, bool, boolInt, nowIso, type SqlValue } from './sqlite.ts'
+import { type Database, bool, boolInt, nowIso, type SqlValue } from './sqlite.ts'
 import type { CallLogStore, NewCallLog } from './call-logs.ts'
 import type { DataSourceRow, DataSourceStore } from './data-sources.ts'
 import type { SettingsStore, SettingRow } from './settings.ts'
@@ -20,6 +21,11 @@ export function hashPassword(password: string): string {
 }
 
 export function verifyPassword(password: string, stored: string): boolean {
+  // Go 版备份里的口令是 bcrypt（$2a$10$…），迁移后要能登录；新口令仍一律 scrypt。
+  // 只认 legacy 前缀，避免任何未知格式被当成"通过"。
+  if (stored.startsWith('$2a$') || stored.startsWith('$2b$') || stored.startsWith('$2y$')) {
+    return bcryptCompare(password, stored)
+  }
   const parts = stored.split('$')
   if (parts.length !== 6 || parts[0] !== 'scrypt') return false
   const [, n, r, p, saltB64, hashB64] = parts as [string, string, string, string, string, string]
@@ -71,9 +77,9 @@ export interface SessionStore {
 }
 
 export class DbSessions implements SessionStore {
-  private readonly db: SqliteDb
+  private readonly db: Database
 
-  constructor(db: SqliteDb) {
+  constructor(db: Database) {
     this.db = db
   }
 
@@ -96,7 +102,11 @@ export class DbSessions implements SessionStore {
     )
     if (!row) return false
     if (row.revoked_at || row.deleted_at || row.status !== 1) return false
-    return Date.parse(row.expires_at) > Date.now()
+    // jwt_expire_hours=-1（永不过期）时 issueToken 把 expires_at 写成 1970 零值哨兵；
+    // Go 版对应写 100 年后。这里把哨兵认作"无到期时间"，否则永不过期票会在落库瞬间就 401。
+    const expires = Date.parse(row.expires_at)
+    if (expires <= 0) return true // 0 = 1970 哨兵 = 永不过期
+    return expires > Date.now()
   }
 
   listByUser(userId: number) {
@@ -128,9 +138,9 @@ export interface ApiKeyStore {
 }
 
 export class DbApiKeys implements ApiKeyStore {
-  private readonly db: SqliteDb
+  private readonly db: Database
 
-  constructor(db: SqliteDb) {
+  constructor(db: Database) {
     this.db = db
   }
 
@@ -159,9 +169,9 @@ export class DbApiKeys implements ApiKeyStore {
 }
 
 export class DbUsers implements UserStore {
-  private readonly db: SqliteDb
+  private readonly db: Database
 
-  constructor(db: SqliteDb) {
+  constructor(db: Database) {
     this.db = db
   }
 
@@ -354,9 +364,9 @@ export interface RoleStore {
 }
 
 export class DbRoles implements RoleStore {
-  private readonly db: SqliteDb
+  private readonly db: Database
 
-  constructor(db: SqliteDb) {
+  constructor(db: Database) {
     this.db = db
   }
 
@@ -400,9 +410,9 @@ export interface PlanStore {
 }
 
 export class DbPlans implements PlanStore {
-  private readonly db: SqliteDb
+  private readonly db: Database
 
-  constructor(db: SqliteDb) {
+  constructor(db: Database) {
     this.db = db
   }
 

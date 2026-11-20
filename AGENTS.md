@@ -83,7 +83,7 @@ PLUGIN_DIR=plugins node apps/server/src/main.ts          # ③ 起服务 → cur
 - 当前实现：`node:sqlite`（Node 内置）+ 手写 DDL（`sqlite.ts` 的 `SCHEMA`）。加表 = 在 SCHEMA 里
   `CREATE TABLE IF NOT EXISTS` + 一个 Repo；**不要**在业务层拼 SQL。
 - `DB_PATH` 默认 `DATA_DIR/loomproxy.db`；用例用 `:memory:`。
-- 口令用 scrypt（`hashPassword/verifyPassword`）；会话是**现行校验**（JWT 带 jti，撤销即刻失效）。
+- 口令用 scrypt（`hashPassword/verifyPassword`）；**旧库迁移进来的 bcrypt（`$2a$/$2b$/$2y$`）由 `verifyPassword` 兼容校验，但新口令一律 scrypt**（`tools/mysql-to-sqlite.mjs` 从 Go 备份迁入 1,678 个 bcrypt 用户，不兼容就没人能登录）。会话是**现行校验**（JWT 带 jti，撤销即刻失效）。
 - 播种（角色/默认套餐/管理员/内置设置）在 `apps/server/src/compose.ts`，**幂等**：已存在的不覆盖。
 - 未接域一律 501 + 人话（`notWired()`），不要返回成功空响应。
 - JWT claims 必须与 Go `utils/jwt.go` 同形（`uid`/`username` + jti/iat/iss/sub，`exp` 可缺省）；
@@ -113,3 +113,8 @@ PLUGIN_DIR=plugins node apps/server/src/main.ts          # ③ 起服务 → cur
 - **代码与文档同步更新**：改动行为、模块职责或实现位置时，同一批提交必须回写对应文档
   （文件头注释、`README.md`、`WORKLOG.md`、`docs/方案/迁移-TS-{1..4}.md`）——
   设计正本与代码冲突时以代码事实为准修正双方（见开头总则），不允许只改一边留下漂移。
+- **关键变更必须记进 `WORKLOG.md`**：凡是改变行为、契约/字段、分层或依赖、不变量（WORKLOG §4）、
+  新增端点/表/源包、修掉一个踩过的坑，同一批提交里必须更新 WORKLOG——不是记流水账，
+  只记影响后来人判断的东西：头部「一句话状态/最近一次提交」、§3 能力、§4 不变量、
+  §6 踩坑台账（症状 → 真因 → 判据）、§10 提交索引，按需落位。
+  纯格式、改名、补注释之类不改语义的小修可以跳过；漏记等于把坑留给下一个会话。
