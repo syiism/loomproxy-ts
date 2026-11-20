@@ -6,7 +6,7 @@ import type {
 import { isValidSettingType, mediaLabel } from '@loomproxy/contract'
 import { type Database, bool, boolInt, nowIso, type SqlValue } from './sqlite.ts'
 import type { DataSourceRow, DataSourceStore } from './data-sources.ts'
-import type { CallLogStore, NewCallLog } from './call-logs.ts'
+import type { CallLogStore, MonitorRow, NewCallLog } from './call-logs.ts'
 import type { SettingsStore, SettingRow } from './settings.ts'
 
 /** 维度 → 列与统计口径（唯一映射表；请求可控的只是键） */
@@ -275,6 +275,32 @@ export class DbCallLogs implements CallLogStore {
 
   clear(): void {
     this.db.run('DELETE FROM api_call_logs')
+  }
+
+  /** 接口监控：自 sinceIso 起的逐源/动作聚合（内存计数快照语义，重启后起点刷新） */
+  windowStats(sinceIso: string): MonitorRow[] {
+    const rows = this.db.all<Record<string, SqlValue>>(
+      `SELECT source, action,
+              COUNT(*) AS total,
+              SUM(CASE WHEN status < 400 AND in_band_error = 0 THEN 1 ELSE 0 END) AS success,
+              SUM(CASE WHEN status >= 400 OR in_band_error = 1 THEN 1 ELSE 0 END) AS failed,
+              COALESCE(SUM(latency_ms), 0) AS total_latency_ms,
+              COALESCE(MAX(latency_ms), 0) AS max_latency_ms,
+              MAX(created_at) AS last_called_at
+         FROM api_call_logs WHERE created_at >= ?
+        GROUP BY source, action ORDER BY total DESC`,
+      sinceIso,
+    )
+    return rows.map((r) => ({
+      source: String(r['source'] ?? ''),
+      action: String(r['action'] ?? ''),
+      total: Number(r['total'] ?? 0),
+      success: Number(r['success'] ?? 0),
+      failed: Number(r['failed'] ?? 0),
+      total_latency_ms: Number(r['total_latency_ms'] ?? 0),
+      max_latency_ms: Number(r['max_latency_ms'] ?? 0),
+      last_called_at: String(r['last_called_at'] ?? ''),
+    }))
   }
 
   /** 源/动作维度的读数（面板「监控」页与总览） */

@@ -216,6 +216,9 @@ test('/admin/monitor 回完整形状（面板 overview/items/recent），不是 
     for (const k of ['source', 'action', 'total', 'success', 'failed', 'success_rate', 'avg_latency_ms', 'max_latency_ms', 'lifetime', 'last_called_at']) {
       assert.ok(k in item, `monitor item 缺字段 ${k}`)
     }
+    // 口径一致：total 是启动以来窗口计数，lifetime 是历史累计，后者必须 >= 前者
+    assert.ok(Number(item['lifetime']) >= Number(item['total']), 'lifetime 是历史累计，不能小于启动以来窗口计数')
+    assert.ok(Number(d['lifetime_total']) >= Number(d['total']), 'lifetime_total 不能小于 total')
   } finally {
     await app.close()
     rmSync(root, { recursive: true, force: true })

@@ -827,26 +827,34 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
     // lifetime_total/items/recent），不是 {stats,total}。TS 用 api_call_stats 的累计读数做口径：
     // 每个源/动作一行，total=success+failed，avg=总延迟/total，lifetime 就是累计值。
     // recent 取最近 50 条明细。这样各格不再是 0/空，"总调用"也不再错用 DB 明细行数。
+    // 口径（与 Go 一致）：total/success/items[].total = 服务启动以来的窗口计数（重启清零），
+    // lifetime_total/items[].lifetime = 历史累计（api_call_stats）。两者不能混用——
+    // 之前错把历史累计当 total，却把 started_at 写成启动时刻，面板上与"统计起点"自相矛盾。
+    const win = stores.callLogs?.windowStats?.(MONITOR_STARTED_AT) ?? []
     const stats = (stores.callLogs as unknown as { stats?: () => Array<Record<string, unknown>> })?.stats?.() ?? []
     const num = (v: unknown) => Number(v ?? 0)
-    let total = 0, success = 0, lifetimeTotal = 0
-    const items = stats.map((r) => {
-      const t = num(r['total']), s = num(r['success']), f = num(r['failed'])
-      const lat = num(r['total_latency_ms'])
-      total += t
-      success += s
+    const lifetimeByKey = new Map<string, number>()
+    let lifetimeTotal = 0
+    for (const r of stats) {
+      const t = num(r['total'])
+      lifetimeByKey.set(`${r['source']}/${r['action']}`, t)
       lifetimeTotal += t
+    }
+    let total = 0, success = 0
+    const items = win.map((r) => {
+      total += r.total
+      success += r.success
       return {
-        source: String(r['source'] ?? ''),
-        action: String(r['action'] ?? ''),
-        total: t,
-        success: s,
-        failed: f,
-        success_rate: t > 0 ? (s / t) * 100 : 0,
-        avg_latency_ms: t > 0 ? Math.round(lat / t) : 0,
-        max_latency_ms: num(r['max_latency_ms']),
-        lifetime: t,
-        last_called_at: r['updated_at'] ?? null,
+        source: r.source,
+        action: r.action,
+        total: r.total,
+        success: r.success,
+        failed: r.failed,
+        success_rate: r.total > 0 ? (r.success / r.total) * 100 : 0,
+        avg_latency_ms: r.total > 0 ? Math.round(r.total_latency_ms / r.total) : 0,
+        max_latency_ms: r.max_latency_ms,
+        lifetime: lifetimeByKey.get(`${r.source}/${r.action}`) ?? r.total,
+        last_called_at: r.last_called_at || null,
       }
     })
     const failed = total - success

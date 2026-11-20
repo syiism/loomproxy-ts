@@ -14,11 +14,19 @@ const DIM: Record<SubjectWindowQuery['dim'], { column: keyof CallLogRow; onlyPre
   media: { column: 'media_type', onlyPresent: false, onlyActions: [], byVisitors: false },
 }
 
+/** 接口监控逐源/动作读数（启动以来窗口） */
+export type MonitorRow = {
+  source: string; action: string; total: number; success: number; failed: number
+  total_latency_ms: number; max_latency_ms: number; last_called_at: string
+}
+
 export interface CallLogStore {
   append(row: NewCallLog): CallLogRow
   page(q: CallLogQuery): CallLogPage
   count(): number
   clear(): void
+  /** 接口监控：自 sinceIso 起的逐源/动作聚合（对应 Go 的内存计数快照，重启后起点刷新） */
+  windowStats(sinceIso: string): MonitorRow[]
   /** 内容维度榜（阅读记录）；窗口起点由调用方按时区日界算好 */
   subjects(q: SubjectWindowQuery): SubjectItem[]
   /** 内容维度覆盖率（源 × 接口） */
@@ -68,6 +76,29 @@ export class InMemoryCallLogs implements CallLogStore {
 
   clear(): void {
     this.rows = []
+  }
+
+  windowStats(sinceIso: string): MonitorRow[] {
+    const acc = new Map<string, MonitorRow>()
+    for (const r of this.rows) {
+      if (r.created_at < sinceIso) continue
+      const key = `${r.source}/${r.action}`
+      let row = acc.get(key)
+      if (!row) {
+        row = {
+          source: r.source, action: r.action, total: 0, success: 0, failed: 0,
+          total_latency_ms: 0, max_latency_ms: 0, last_called_at: r.created_at,
+        }
+        acc.set(key, row)
+      }
+      row.total++
+      if (r.status < 400 && !r.in_band_error) row.success++
+      else row.failed++
+      row.total_latency_ms += r.latency_ms
+      row.max_latency_ms = Math.max(row.max_latency_ms, r.latency_ms)
+      if (r.created_at > row.last_called_at) row.last_called_at = r.created_at
+    }
+    return [...acc.values()]
   }
 
   subjects(q: SubjectWindowQuery): SubjectItem[] {
