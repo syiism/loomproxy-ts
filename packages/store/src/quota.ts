@@ -1,6 +1,6 @@
 // 额度域（额度=授权，见 gate/grant.go 的同一口径）：套餐限额既是"能给多少"也是"能不能用这个源"。
 // 生效顺序：用户覆盖 → 套餐限额 → 不限（没有限额行 = 该套餐不含这个源，访问判定那边据此拒绝）。
-import { SqliteDb, nowIso, type SqlValue } from './sqlite.ts'
+import { type Database, nowIso, type SqlValue } from './sqlite.ts'
 
 export type LimitRow = { id: number; plan_id: number; scope: string; target: string; limit: number; created_at: string; updated_at: string }
 export type CostRow = {
@@ -28,9 +28,9 @@ export function defaultCostFor(action: string): number {
 }
 
 export class DbQuota {
-  private readonly db: SqliteDb
+  private readonly db: Database
 
-  constructor(db: SqliteDb) {
+  constructor(db: Database) {
     this.db = db
   }
 

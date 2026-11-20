@@ -1,12 +1,12 @@
 // IP 黑名单：登录/注册/数据面三处共用一个判定口（三份事实＝三处漏法）。
-import { SqliteDb, nowIso } from './sqlite.ts'
+import { type Database, nowIso } from './sqlite.ts'
 
 export type BlockedIP = { id: number; ip: string; reason: string; created_at: string }
 
 export class DbBlockedIPs {
-  private readonly db: SqliteDb
+  private readonly db: Database
 
-  constructor(db: SqliteDb) {
+  constructor(db: Database) {
     this.db = db
   }
 

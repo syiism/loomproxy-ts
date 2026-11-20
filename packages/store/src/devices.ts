@@ -1,6 +1,6 @@
 // 「设备与密钥」读数：会话 / 密钥 / 明细 IP 三张表按用户聚合。
 // 只读；处置在登录侧（IP 拉黑、会话撤销），这一页只回答"谁看起来不对劲"。
-import { SqliteDb } from './sqlite.ts'
+import { type Database } from './sqlite.ts'
 
 export type DeviceRow = {
   user_id: number
@@ -17,9 +17,9 @@ export type DeviceRow = {
 }
 
 export class DbDevices {
-  private readonly db: SqliteDb
+  private readonly db: Database
 
-  constructor(db: SqliteDb) {
+  constructor(db: Database) {
     this.db = db
   }
 

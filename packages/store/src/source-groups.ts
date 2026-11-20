@@ -1,6 +1,6 @@
 // 数据源分组：**视图 + 批量操作单位**，不参与任何键控（额度/计费/限速一律按源码）。
 // 组停用不摘成员：成员按「未分组」渲染（分组不是准入开关）。
-import { SqliteDb, nowIso } from './sqlite.ts'
+import { type Database, nowIso } from './sqlite.ts'
 import type { DbQuota } from './quota.ts'
 
 export type GroupRow = {
@@ -13,10 +13,10 @@ export type GroupRow = {
 }
 
 export class DbSourceGroups {
-  private readonly db: SqliteDb
+  private readonly db: Database
   private readonly quota: DbQuota
 
-  constructor(db: SqliteDb, quota: DbQuota) {
+  constructor(db: Database, quota: DbQuota) {
     this.db = db
     this.quota = quota
   }

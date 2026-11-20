@@ -4,7 +4,7 @@ import type {
   SubjectCoverageRow, SubjectDim, SubjectItem, SubjectWindowQuery,
 } from '@loomproxy/contract'
 import { isValidSettingType, mediaLabel } from '@loomproxy/contract'
-import { SqliteDb, bool, boolInt, nowIso, type SqlValue } from './sqlite.ts'
+import { type Database, bool, boolInt, nowIso, type SqlValue } from './sqlite.ts'
 import type { DataSourceRow, DataSourceStore } from './data-sources.ts'
 import type { CallLogStore, NewCallLog } from './call-logs.ts'
 import type { SettingsStore, SettingRow } from './settings.ts'
@@ -22,9 +22,9 @@ const SUBJECT_DIM_COLUMNS: Record<
 }
 
 export class DbSettings implements SettingsStore {
-  private readonly db: SqliteDb
+  private readonly db: Database
 
-  constructor(db: SqliteDb) {
+  constructor(db: Database) {
     this.db = db
   }
 
@@ -125,9 +125,9 @@ export class DbSettings implements SettingsStore {
 }
 
 export class DbDataSources implements DataSourceStore {
-  private readonly db: SqliteDb
+  private readonly db: Database
 
-  constructor(db: SqliteDb) {
+  constructor(db: Database) {
     this.db = db
   }
 
@@ -200,9 +200,9 @@ export class DbDataSources implements DataSourceStore {
 }
 
 export class DbCallLogs implements CallLogStore {
-  private readonly db: SqliteDb
+  private readonly db: Database
 
-  constructor(db: SqliteDb) {
+  constructor(db: Database) {
     this.db = db
   }
 

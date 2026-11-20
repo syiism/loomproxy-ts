@@ -1,11 +1,11 @@
 // 数据源默认地址（平台级 / 个人级）：面板「数据源」与「个人中心」两页读写同一对表。
 // 空串 = 删除该行（回落到上层：个人 → 平台 → 源内置；这条回落顺序在 middleware/source 里）。
-import { SqliteDb, nowIso } from './sqlite.ts'
+import { type Database, nowIso } from './sqlite.ts'
 
 export class DbSourceConfigs {
-  private readonly db: SqliteDb
+  private readonly db: Database
 
-  constructor(db: SqliteDb) {
+  constructor(db: Database) {
     this.db = db
   }
 

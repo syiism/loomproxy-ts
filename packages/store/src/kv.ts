@@ -1,12 +1,12 @@
 // 运行期标记（不进面板、不参与任何业务判定）：只给"这段逻辑要知道上次是什么状态"用。
 // 第一个使用方是管理员口令来源（generated / env / panel）——没有这个标记，
 // 重启后就分不清"库里的哈希是 env 种的、随机生成的，还是管理员在面板改的"。
-import { SqliteDb, nowIso } from './sqlite.ts'
+import { type Database, nowIso } from './sqlite.ts'
 
 export class DbKv {
-  private readonly db: SqliteDb
+  private readonly db: Database
 
-  constructor(db: SqliteDb) {
+  constructor(db: Database) {
     this.db = db
   }
 

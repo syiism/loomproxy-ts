@@ -1,6 +1,6 @@
 // 数据源定时启停：到点自动启用（面板"每天时段"或"一次性"）。
 // 语义只有一条：**窗口内 = 该源启用**；窗口外不回滚管理员手改的 status（一次性用完置 status=0）。
-import { SqliteDb, nowIso, type SqlValue } from './sqlite.ts'
+import { type Database, nowIso, type SqlValue } from './sqlite.ts'
 
 export type ScheduleRow = {
   id: number
@@ -24,9 +24,9 @@ export type ScheduleView = ScheduleRow & {
 }
 
 export class DbSchedules {
-  private readonly db: SqliteDb
+  private readonly db: Database
 
-  constructor(db: SqliteDb) {
+  constructor(db: Database) {
     this.db = db
   }
 

@@ -25,6 +25,8 @@ import {
   DbSettings,
   DbUsers,
   SqliteDb,
+  MysqlDb,
+  type Database,
   hashPassword,
 } from '@loomproxy/store'
 import { createPoolRuntime } from '@loomproxy/pool'
@@ -41,7 +43,7 @@ export type ComposeOptions = {
 export type Composed = {
   config: Config
   app: FastifyInstance
-  db: SqliteDb
+  db: Database
   host: SourceHost
   registry: SourceRegistry
   settings: DbSettings
@@ -78,9 +80,29 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
   const logger = opts.logger ?? createLogger(config.serverLogLevel, 'loomproxy')
   for (const w of config.warnings) logger.warn(w)
 
+  // 后端选择：显式 DB_TYPE=mysql 才用 MySQL（config 默认 mysql 但旧 .env 无此键，
+  // 不能因此把一直用 SQLite 的本地/现有部署突然切到 MySQL）。其余一律 SQLite。
+  const useMysql = String(env['DB_TYPE'] ?? '').toLowerCase() === 'mysql'
   const dbPath = env['DB_PATH'] ?? join(config.dataDir, 'loomproxy.db')
-  const db = new SqliteDb(dbPath)
-  db.migrate()
+  let db: Database
+  if (useMysql) {
+    const required = ['DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'] as const
+    const missing = required.filter((k) => !env[k])
+    if (missing.length) throw new Error(`DB_TYPE=mysql 缺少环境变量: ${missing.join(', ')}`)
+    db = new MysqlDb({
+      host: env['DB_HOST']!,
+      port: Number(env['DB_PORT'] ?? 3306),
+      user: env['DB_USER']!,
+      password: env['DB_PASSWORD']!,
+      database: env['DB_NAME']!,
+      metaPath: env['MYSQL_META_PATH'] ?? join(config.dataDir, 'loomproxy-meta.db'),
+      sabMb: env['MYSQL_SAB_MB'] ? Number(env['MYSQL_SAB_MB']) : undefined,
+    })
+    logger.info(`数据库 MySQL ${env['DB_HOST']}:${env['DB_PORT'] ?? 3306}/${env['DB_NAME']}`)
+  } else {
+    db = new SqliteDb(dbPath)
+    db.migrate()
+  }
 
   const settings = new DbSettings(db)
   // 内置设置：键/初值/类型/说明与 Go 的 db/seed.go 逐条对齐（29 条），幂等且不覆盖管理员改过的值
@@ -156,8 +178,9 @@ export async function compose(opts: ComposeOptions = {}): Promise<Composed> {
       logger.warn(`未设置 ADMIN_PASSWORD：管理员 ${adminName} 沿用库中口令（忘了就设 ADMIN_PASSWORD_SYNC=true 再重启）`)
     }
   }
-  // 启动日志必须能回答"凭什么口令登不上"：库路径 + 管理员 + 口令实际来源
-  logger.info(`数据库 ${dbPath}　管理员 ${adminName}（口令来源：${kv.get(`admin_password_source:${adminName}`) || 'unknown'}）`)
+  // 启动日志必须能回答"凭什么口令登不上"：库位置 + 管理员 + 口令实际来源
+  const dbLabel = useMysql ? `MySQL ${env['DB_HOST']}/${env['DB_NAME']}` : dbPath
+  logger.info(`数据库 ${dbLabel}　管理员 ${adminName}（口令来源：${kv.get(`admin_password_source:${adminName}`) || 'unknown'}）`)
   // hashPassword 在播种之外也要可用（改密走 users.setPassword）
   void hashPassword
 

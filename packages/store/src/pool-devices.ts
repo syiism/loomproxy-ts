@@ -1,7 +1,7 @@
 // 池的设备持久化：实现 contract 里的 DeviceStore 端口（**不 import @loomproxy/pool**，
 // 只认那张形状——这是"声明在契约、实现在下游"的单向依赖写法）。
 import type { DeviceStore, PoolDeviceRow, PoolStatus } from '@loomproxy/contract'
-import { SqliteDb, nowIso, type SqlValue } from './sqlite.ts'
+import { type Database, nowIso, type SqlValue } from './sqlite.ts'
 
 type Row = {
   ident: string
@@ -17,9 +17,9 @@ type Row = {
 }
 
 export class DbPoolDevices implements DeviceStore {
-  private readonly db: SqliteDb
+  private readonly db: Database
 
-  constructor(db: SqliteDb) {
+  constructor(db: Database) {
     this.db = db
   }
 

@@ -1,7 +1,7 @@
 // 额度域的三块延伸：套餐级限速覆盖、额度转移、卡密兑换。
 // 都与主表同库同事务——转移/兑换是"要么全成要么不动"的多行改动，不许两个入口各写一半。
 import { randomBytes } from 'node:crypto'
-import { SqliteDb, nowIso, type SqlValue } from './sqlite.ts'
+import { type Database, nowIso, type SqlValue } from './sqlite.ts'
 import type { DbQuota } from './quota.ts'
 
 export type CostPlanRow = {
@@ -40,10 +40,10 @@ export type RedeemRow = {
 }
 
 export class DbQuotaExtra {
-  private readonly db: SqliteDb
+  private readonly db: Database
   private readonly quota: DbQuota
 
-  constructor(db: SqliteDb, quota: DbQuota) {
+  constructor(db: Database, quota: DbQuota) {
     this.db = db
     this.quota = quota
   }

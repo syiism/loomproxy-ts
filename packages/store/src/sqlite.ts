@@ -282,7 +282,17 @@ export function nowIso(): string {
   return new Date().toISOString()
 }
 
-export class SqliteDb {
+/** 存储后端契约：Repo 只依赖这四个同步方法（+ 生命周期），换 provider 时 Repo 一行不改。 */
+export interface Database {
+  get<T = Row>(sql: string, ...params: SqlValue[]): T | undefined
+  all<T = Row>(sql: string, ...params: SqlValue[]): T[]
+  run(sql: string, ...params: SqlValue[]): { changes: number; lastInsertRowid: number }
+  tx<T>(fn: () => T): T
+  migrate(): void
+  close(): void
+}
+
+export class SqliteDb implements Database {
   readonly raw: DatabaseSync
   private readonly cache = new Map<string, StatementSync>()
 
