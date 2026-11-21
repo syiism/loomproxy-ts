@@ -16,8 +16,8 @@ export type CostPlanRow = {
 export type TransferRow = {
   id: number
   user_id: number
-  username: string
-  operator: string
+  operator_id: number
+  via: 'self' | 'admin'
   from_code: string
   to_code: string
   amount: number
@@ -25,7 +25,29 @@ export type TransferRow = {
   from_after: number
   to_before: number
   to_after: number
+  from_override: number
+  to_override: number
   created_at: string
+  cleared_at: string | null
+}
+
+/** 与 Go gate.TransferErrorStatus 一一对应：成因 → 给用户看的固定句 / HTTP 状态码 */
+export const TRANSFER_ERRORS = {
+  amount: [400, '转移数量必须是正整数'],
+  same: [400, '转出与转入是同一个数据源'],
+  source: [400, '数据源不存在或已停用'],
+  unlimited: [400, '不限额的源不参与转移'],
+  no_grant: [400, '目标源未授权给该用户'],
+  insufficient: [400, '转出源的当日限额不足'],
+} as const
+export type TransferErrorCode = keyof typeof TRANSFER_ERRORS
+
+export function transferError(code: TransferErrorCode): Error & { transferCode: TransferErrorCode } {
+  return Object.assign(new Error(TRANSFER_ERRORS[code][1]), { transferCode: code })
+}
+export function transferStatus(e: unknown): number {
+  const code = (e as { transferCode?: TransferErrorCode } | undefined)?.transferCode
+  return code ? TRANSFER_ERRORS[code][0] : 500
 }
 export type RedeemRow = {
   id: number
@@ -99,38 +121,81 @@ export class DbQuotaExtra {
     return {}
   }
 
-  // ---- 额度转移 ----
-  /** 把自己两个源之间的**日限额**重排：转出减、转入加，总数不变；不限额端不参与 */
-  transfer(input: { userId: number; username: string; operator: string; from: string; to: string; amount: number; planId: number | null }): TransferRow {
-    const amount = Math.max(1, Math.trunc(input.amount))
-    if (input.from === input.to) throw new Error('转出与转入不能是同一个源')
+  // ---- 额度转移（与 Go gate/transfer.go + transfer_math.go 逐条对齐） ----
+  /**
+   * 一次转移的完整算式：*Before/*After 是**有效额度**，*OverrideAfter 是写回覆盖行的**增量**。
+   * 纯函数，守恒（转出恰减、转入恰加）与「超额直接拒，不许夹到 0 后继续」都在这里钉住。
+   */
+  static transferPlan(baseFrom: number, ovFrom: number, baseTo: number, ovTo: number, amount: number) {
+    const clamp = (v: number) => Math.max(0, v)
+    if (amount <= 0) return undefined
+    const fromBefore = clamp(baseFrom + ovFrom)
+    const toBefore = clamp(baseTo + ovTo)
+    if (fromBefore < amount) return undefined
+    const fromAfter = fromBefore - amount
+    const toAfter = clamp(toBefore + amount)
+    return {
+      fromBefore, fromAfter, toBefore, toAfter,
+      fromOverrideAfter: fromAfter - baseFrom,
+      toOverrideAfter: toAfter - baseTo,
+    }
+  }
+
+  /**
+   * 执行转移：两端都必须是存在且启用的数据源、目标须已授权、两端都不能是 -1（不限）；
+   * 覆盖行写增量（0 删行），审计行与两行覆盖同事务。operatorId/via 区分本人与管理员操作。
+   */
+  transfer(input: { userId: number; operatorId: number; via: 'self' | 'admin'; from: string; to: string; amount: number; planId: number | null }): TransferRow {
+    const amount = Math.trunc(Number(input.amount))
+    if (!Number.isFinite(amount) || amount <= 0) throw transferError('amount')
+    if (!input.from || !input.to) throw transferError('source')
+    if (input.from === input.to) throw transferError('same')
+    const active = this.db.get<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM data_sources WHERE name IN (?,?) AND status = 1', input.from, input.to,
+    )?.n ?? 0
+    if (active !== 2) throw transferError('source')
+
+    const baseFrom = this.quota.baseLimitOf(input.planId, input.from)
+    const baseTo = this.quota.baseLimitOf(input.planId, input.to)
+    if (baseTo < 0) {
+      const granted = input.planId !== null && this.quota.hasGrant(input.planId, input.to)
+      throw transferError(granted ? 'unlimited' : 'no_grant')
+    }
+    if (baseFrom < 0) throw transferError('unlimited')
+
+    const math = DbQuotaExtra.transferPlan(
+      baseFrom, this.quota.overrideRaw(input.userId, input.from),
+      baseTo, this.quota.overrideRaw(input.userId, input.to),
+      amount,
+    )
+    if (!math) throw transferError('insufficient')
+
     return this.db.tx(() => {
-      const fromLimit = this.quota.effectiveLimit(input.userId, input.planId, input.from)
-      const toLimit = this.quota.effectiveLimit(input.userId, input.planId, input.to)
-      if (fromLimit < 0 || toLimit < 0) throw new Error('不限额的数据源不参与转移')
-      if (fromLimit < amount) throw new Error(`转出方额度不足（当前 ${fromLimit}）`)
-      this.quota.setOverride(input.userId, 'source', input.from, fromLimit - amount)
-      this.quota.setOverride(input.userId, 'source', input.to, toLimit + amount)
+      // 两行覆盖是同一个事务里的**增量**写回；0 表示删行（回到无覆盖）
+      this.quota.setOverride(input.userId, 'source', input.from, math.fromOverrideAfter)
+      this.quota.setOverride(input.userId, 'source', input.to, math.toOverrideAfter)
       const now = nowIso()
       const { lastInsertRowid } = this.db.run(
-        `INSERT INTO quota_transfer_logs (user_id, username, operator, from_code, to_code, amount,
-           from_before, from_after, to_before, to_after, created_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-        input.userId, input.username, input.operator, input.from, input.to, amount,
-        fromLimit, fromLimit - amount, toLimit, toLimit + amount, now,
+        `INSERT INTO quota_transfer_logs (user_id, operator_id, via, from_code, to_code, amount,
+           from_before, from_after, to_before, to_after, from_override, to_override, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        input.userId, input.operatorId, input.via, input.from, input.to, amount,
+        math.fromBefore, math.fromAfter, math.toBefore, math.toAfter,
+        math.fromOverrideAfter, math.toOverrideAfter, now,
       )
       return this.db.get<TransferRow>('SELECT * FROM quota_transfer_logs WHERE id = ?', lastInsertRowid)!
     })
   }
 
-  transfers(q: { userId?: number; page: number; pageSize: number }): { total: number; page: number; page_size: number; list: TransferRow[] } {
-    const where = ['deleted_at IS NULL']
+  /** includeCleared=false = 本人视角（清掉的不再看见）；true = 管理端审计面，一概不过滤 */
+  transfers(q: { userId?: number; page: number; pageSize: number; includeCleared?: boolean }): { total: number; page: number; page_size: number; list: TransferRow[] } {
+    const where: string[] = q.includeCleared ? [] : ['cleared_at IS NULL']
     const params: SqlValue[] = []
     if (q.userId !== undefined) {
       where.push('user_id = ?')
       params.push(q.userId)
     }
-    const clause = `WHERE ${where.join(' AND ')}`
+    const clause = where.length ? `WHERE ${where.join(' AND ')}` : ''
     const total = this.db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM quota_transfer_logs ${clause}`, ...params)?.n ?? 0
     const list = this.db.all<TransferRow>(
       `SELECT * FROM quota_transfer_logs ${clause} ORDER BY id DESC LIMIT ? OFFSET ?`,
@@ -139,9 +204,9 @@ export class DbQuotaExtra {
     return { total, page: q.page, page_size: q.pageSize, list }
   }
 
-  /** 清除 = 软删（行留库里，管理端仍可查） */
+  /** 本人清除 = 软删（行留库里，管理端审计面仍可查） */
   clearTransfers(userId: number): number {
-    return this.db.run('UPDATE quota_transfer_logs SET deleted_at = ? WHERE user_id = ? AND deleted_at IS NULL', nowIso(), userId).changes
+    return this.db.run('UPDATE quota_transfer_logs SET cleared_at = ? WHERE user_id = ? AND cleared_at IS NULL', nowIso(), userId).changes
   }
 
   // ---- 卡密 ----

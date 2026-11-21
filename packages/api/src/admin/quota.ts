@@ -2,9 +2,10 @@
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { fail, ok } from '@loomproxy/contract'
+import { transferStatus } from '@loomproxy/store'
 import { clampPage, clampPageSize } from '@loomproxy/kernel'
 import { resolveIdentity } from '../auth.ts'
-import { nextResetLabel } from './shared.ts'
+import { nextResetLabel, selfTransferView, transferResultView } from './shared.ts'
 import type { AdminContext } from './shared.ts'
 
 export function registerQuotaRoutes(app: FastifyInstance, deps: AdminContext): void {
@@ -296,17 +297,14 @@ export function registerQuotaRoutes(app: FastifyInstance, deps: AdminContext): v
     const user = stores.users?.byId(id.userId)
     try {
       const row = extra.transfer({
-        userId: id.userId,
-        username: user?.username ?? '',
-        operator: user?.username ?? '',
-        from: b.from ?? '',
-        to: b.to ?? '',
-        amount: b.amount ?? 0,
+        userId: id.userId, operatorId: id.userId, via: 'self',
+        from: b.from ?? '', to: b.to ?? '', amount: b.amount ?? 0,
         planId: user?.plan_id ?? null,
       })
-      return ok(row)
+      return ok(transferResultView(row))
     } catch (e) {
-      reply.code(400).send(fail(config.errorCode, e instanceof Error ? e.message : '转移失败'))
+      const status = transferStatus(e)
+      reply.code(status).send(fail(config.errorCode, status === 500 ? '转移失败' : (e as Error).message))
     }
   })
 
@@ -317,10 +315,12 @@ export function registerQuotaRoutes(app: FastifyInstance, deps: AdminContext): v
       return
     }
     const qs = req.query as Record<string, string>
-    return ok(
-      stores.quotaExtra?.transfers({ userId: id.userId, page: clampPage(qs['page']), pageSize: clampPageSize(qs['page_size']) }) ??
-        { total: 0, page: 1, page_size: 20, list: [] },
-    )
+    const data = stores.quotaExtra?.transfers({ userId: id.userId, page: clampPage(qs['page']), pageSize: clampPageSize(qs['page_size']) })
+    return ok({
+      ...(data ?? { total: 0, page: 1, page_size: 20 }),
+      list: (data?.list ?? []).map(selfTransferView),
+      scope: '转移改的是日限额的覆盖增量，**不随每日刷新回退**；要恢复只能再转回来',
+    })
   })
 
   app.delete('/quota/transfers', async (req, reply) => {

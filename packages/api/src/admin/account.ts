@@ -7,6 +7,8 @@ import { resolveIdentity } from '../auth.ts'
 import { resetAttempts, snapshot } from '../login-limiter.ts'
 import { dedupeReadout } from '../dispatch.ts'
 import { Ledger } from '@loomproxy/gate'
+import { transferStatus } from '@loomproxy/store'
+import { adminTransferView, transferResultView } from './shared.ts'
 import type { AdminContext } from './shared.ts'
 
 export function registerAccountRoutes(app: FastifyInstance, deps: AdminContext): void {
@@ -212,10 +214,11 @@ export function registerAccountRoutes(app: FastifyInstance, deps: AdminContext):
     if (!(await guard(req, reply))) return
     const { id } = req.params as { id: string }
     const qs = req.query as Record<string, string>
-    return ok(
-      stores.quotaExtra?.transfers({ userId: Number(id), page: clampPage(qs['page']), pageSize: clampPageSize(qs['page_size']) }) ??
-        { total: 0, page: 1, page_size: 20, list: [] },
-    )
+    const data = stores.quotaExtra?.transfers({ userId: Number(id), page: clampPage(qs['page']), pageSize: clampPageSize(qs['page_size']), includeCleared: true })
+    return ok({
+      ...(data ?? { total: 0, page: 1, page_size: 20 }),
+      list: (data?.list ?? []).map((r) => adminTransferView(r, stores.users?.byId(r.operator_id)?.username ?? '')),
+    })
   })
   app.post('/admin/users/:id/quota-transfer', async (req, reply) => {
     if (!(await guard(req, reply))) return
@@ -227,17 +230,14 @@ export function registerAccountRoutes(app: FastifyInstance, deps: AdminContext):
     const me = await resolveIdentity(req, config, deps.stores ?? {})
     try {
       const row = extra.transfer({
-        userId: Number(id),
-        username: target?.username ?? `#${id}`,
-        operator: me.username ?? 'admin',
-        from: b.from ?? '',
-        to: b.to ?? '',
-        amount: b.amount ?? 0,
+        userId: Number(id), operatorId: me.userId ?? 0, via: 'admin',
+        from: b.from ?? '', to: b.to ?? '', amount: b.amount ?? 0,
         planId: target?.plan_id ?? null,
       })
-      return ok(row)
+      return ok(transferResultView(row, target ? { id: target.id, username: target.username } : undefined))
     } catch (e) {
-      reply.code(400).send(fail(config.errorCode, e instanceof Error ? e.message : '转移失败'))
+      const status = transferStatus(e)
+      reply.code(status).send(fail(config.errorCode, status === 500 ? '转移失败' : (e as Error).message))
     }
   })
 

@@ -75,13 +75,17 @@ function writes(r) {
   // 数据源 upsert（media_type 差异）
   r.dataSources.upsert({ code: 'src1', display: '源一', category: 'novel', sort_order: 1, status: 1, media_type: 'novel', actions: ['search'], settings: [] })
   r.dataSources.upsert({ code: 'src1', display: '源一改', category: 'novel', sort_order: 2, status: 1, media_type: 'novel', actions: ['search'], settings: [] })
-  r.dataSources.setStatus('src1', 0)
+  r.dataSources.upsert({ code: 'src2', display: '源二', category: 'novel', sort_order: 3, status: 1, media_type: 'novel', actions: ['search'], settings: [] })
   // 调用日志（upsert api_call_stats）
   r.callLogs.append({ username: 'alice', ip: '1.2.3.4', source: 'src1', action: 'search', status: 200, latency_ms: 100, in_band_error: false, in_band_reason: '', in_band_code: '', keyword: '三体', book_name: '', chapter_title: '', book_ident: '', chapter_ident: '', media_type: 'novel', result_count: 5, content_withheld: false, plugin_version: '1.0' })
   r.callLogs.append({ username: 'alice', ip: '1.2.3.4', source: 'src1', action: 'search', status: 500, latency_ms: 200, in_band_error: false, in_band_reason: '', in_band_code: '', keyword: '三体', book_name: '', chapter_title: '', book_ident: '', chapter_ident: '', media_type: 'novel', result_count: 0, content_withheld: false, plugin_version: '1.0' })
   // 额度（先查后写 upsert）
   r.quota.grant(r.plan.id, 'source', 'src1', 10)
   r.quota.grant(r.plan.id, 'source', 'src1', 20) // 应更新不重复
+  r.quota.grant(r.plan.id, 'source', 'src2', 20)
+  // 额度转移：覆盖写增量 + 审计行（operator_id/via/from_override/to_override）
+  r.quotaExtra.transfer({ userId: uid, operatorId: uid, via: 'self', from: 'src1', to: 'src2', amount: 5, planId: r.plan.id })
+  r.dataSources.setStatus('src1', 0)
   r.quota.setOverride(uid, 'source', 'src1', 5)
   r.quota.setOverride(uid, 'source', 'src1', 7)
   r.quota.ensureDefaultCosts('src1', ['search', 'content'])
@@ -125,6 +129,8 @@ function reads(r, kind) {
     callLogs: r.db.all(`SELECT source,action,status,${mediaCol} AS media FROM api_call_logs ORDER BY id`),
     limits: r.quota.limitsOfPlan(r.plan.id).map(l => ({ scope: l.scope, target: l.target, limit: l.limit })),
     overrides: r.quota.overridesOf(uid).map(l => ({ target: l.target, limit: l.limit })),
+    transfers: r.db.all('SELECT user_id,operator_id,via,from_code,to_code,amount,from_before,from_after,to_before,to_after,from_override,to_override FROM quota_transfer_logs ORDER BY id')
+      .map(t => ({ ...t, user_id: t.user_id === uid ? '<uid>' : t.user_id, operator_id: t.operator_id === uid ? '<uid>' : t.operator_id })),
     costs: r.db.all('SELECT group_code,interface,cost,status FROM quota_costs ORDER BY group_code,interface'),
     costPlans: r.quotaExtra.costPlans().map(c => ({ group_code: c.group_code, interface: c.interface, interval: c.interval, limit_count: c.limit_count })),
     ipBlock: kind === 'mysql'

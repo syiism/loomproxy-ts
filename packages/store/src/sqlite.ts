@@ -176,11 +176,14 @@ CREATE TABLE IF NOT EXISTS quota_cost_plans (
   updated_at TEXT NOT NULL,
   UNIQUE (plan_id, group_code, "interface")
 );
+-- 与 Go models.QuotaTransferLog 逐列对齐（线上 MySQL 表名/列名照抄）：
+-- operator_id + via 分得开本人/管理员；from_override/to_override 记写回的增量；
+-- cleared_at 是本人软删，管理端不过滤（审计面留着）。
 CREATE TABLE IF NOT EXISTS quota_transfer_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL,
-  username TEXT NOT NULL DEFAULT '',
-  operator TEXT NOT NULL DEFAULT '',
+  operator_id INTEGER NOT NULL,
+  via TEXT NOT NULL,
   from_code TEXT NOT NULL,
   to_code TEXT NOT NULL,
   amount INTEGER NOT NULL,
@@ -188,8 +191,10 @@ CREATE TABLE IF NOT EXISTS quota_transfer_logs (
   from_after INTEGER NOT NULL,
   to_before INTEGER NOT NULL,
   to_after INTEGER NOT NULL,
+  from_override INTEGER NOT NULL,
+  to_override INTEGER NOT NULL,
   created_at TEXT NOT NULL,
-  deleted_at TEXT
+  cleared_at TEXT
 );
 CREATE TABLE IF NOT EXISTS redeem_codes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -326,6 +331,12 @@ export class SqliteDb implements Database {
     // 老库补列：CREATE TABLE IF NOT EXISTS 不会给已存在的表加字段，而发版时不能要求重建库
     this.ensureColumn('source_groups', 'description', "TEXT NOT NULL DEFAULT ''")
     this.ensureColumn('sessions', 'last_active_at', 'TEXT')
+    // SDK 1 老库的转移表补 Go 列（旧 username/operator/deleted_at 留着不用，无数据丢失）
+    this.ensureColumn('quota_transfer_logs', 'operator_id', 'INTEGER NOT NULL DEFAULT 0')
+    this.ensureColumn('quota_transfer_logs', 'via', "TEXT NOT NULL DEFAULT 'self'")
+    this.ensureColumn('quota_transfer_logs', 'from_override', 'INTEGER NOT NULL DEFAULT 0')
+    this.ensureColumn('quota_transfer_logs', 'to_override', 'INTEGER NOT NULL DEFAULT 0')
+    this.ensureColumn('quota_transfer_logs', 'cleared_at', 'TEXT')
   }
 
   private ensureColumn(table: string, column: string, decl: string): void {

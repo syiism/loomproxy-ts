@@ -97,7 +97,8 @@ PLUGIN_DIR=plugins node apps/server/src/main.ts          # ③ 起服务 → cur
   `admin_password_source:<名字>=panel`，否则下次重启会被 env 覆盖（或反过来让 env 永远不生效）。
 - `DATA_DIR`/`DB_PATH` 相对 cwd：启动日志必须打印解析后的库路径与管理员名，否则"换目录启动"会表现成"密码错"。
 - 额度域三条不变量：①**限额即授权**（`quota_limits` 里 `scope='source'` 的一行同时决定"能不能用"与"用多少"）；
-  ②生效顺序 `用户覆盖 → 套餐 → -1(不限)`，每次请求现取（改完立刻生效，不许烘进启动期）；
+  ②生效顺序 `用户覆盖增量 + 套餐限额（下限 0） → -1(不限)`，覆盖写的是**增量**且 0=删行（Go
+  putOverride/EffectiveSourceLimit 同口径），每次请求现取（改完立刻生效，不许烘进启动期）；
   ③只有**成功且非带内失败**才记账，同内容在 `BILLING_DEDUPE_SEC` 内只扣一次。
 - `limit` 是 SQLite 保留字：列名与别名都要加引号（别名别再用 `limit`，踩过一次语法错误）。
 

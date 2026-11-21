@@ -1023,45 +1023,86 @@ test('黑名单：数据面入口直接 403（与登录共用一张表）', asyn
   }
 })
 
-test('额度转移：两个已授权源之间重排日限额，流水一行、覆盖增量立刻生效', async () => {
+test('额度转移：对齐 Go（覆盖写增量、审计行 operator/via、本人清而管理端仍见）', async () => {
   const { app, root, quota, plans, dataSources } = await makeApp()
   try {
-    // 造第二个源（同一条装配路径：插件 upsert 的等价物）
     dataSources.upsert({
-      code: 'demo_two',
-      display: '演示二号',
-      category: 'demo',
-      sort_order: 2,
-      status: 1,
-      actions: ['search'],
-      fixed_base_url: false,
+      code: 'demo_two', display: '演示二号', category: 'demo', sort_order: 2,
+      status: 1, actions: ['search'], fixed_base_url: false,
     })
     const plan = plans.list()[0]!
     quota.grant(plan.id, 'source', 'demo_one', 10)
     quota.grant(plan.id, 'source', 'demo_two', 5)
 
     const res = await app.inject({
-      method: 'POST',
-      url: '/quota/transfer',
+      method: 'POST', url: '/quota/transfer',
       headers: { authorization: `Bearer ${userToken()}` },
       payload: { from: 'demo_one', to: 'demo_two', amount: 3 },
     })
     assert.equal(res.statusCode, 200)
-    const row = (res.json() as { data: { from_after: number; to_after: number; amount: number } }).data
-    assert.equal(row.from_after, 7)
-    assert.equal(row.to_after, 8)
+    const out = (res.json() as { data: Record<string, any> }).data
+    assert.equal(out.amount, 3)
+    assert.deepEqual([out.from.code, out.from.before, out.from.after], ['demo_one', 10, 7])
+    assert.deepEqual([out.to.code, out.to.before, out.to.after], ['demo_two', 5, 8])
+    assert.match(out.scope, /当日限额/)
 
-    const hist = await app.inject({ method: 'GET', url: '/quota/transfers', headers: { authorization: `Bearer ${userToken()}` } })
-    const page = (hist.json() as { data: { total: number; list: Array<{ amount: number }> } }).data
-    assert.equal(page.total, 1)
-    assert.equal(page.list[0]?.amount, 3)
-
-    // 覆盖增量写进 user_quota_overrides，所以总额变了但总数守恒（10+5 = 7+8）
+    // 写进覆盖行的是**增量**（Go putOverride 口径），不是绝对额度
+    assert.equal(quota.overrideRaw(2, 'demo_one'), -3)
+    assert.equal(quota.overrideRaw(2, 'demo_two'), 3)
     assert.equal(quota.effectiveLimit(2, plan.id, 'demo_one'), 7)
     assert.equal(quota.effectiveLimit(2, plan.id, 'demo_two'), 8)
 
+    const hist = await app.inject({ method: 'GET', url: '/quota/transfers', headers: { authorization: `Bearer ${userToken()}` } })
+    const page = (hist.json() as { data: { total: number; scope: string; list: Array<Record<string, any>> } }).data
+    assert.equal(page.total, 1)
+    assert.equal(page.list[0]?.via, 'self')
+    assert.equal(page.list[0]?.from, 'demo_one')
+    assert.match(page.scope, /覆盖增量/)
+
+    const admin = await app.inject({
+      method: 'GET', url: '/admin/users/2/quota-transfers',
+      headers: { authorization: `Bearer ${adminToken()}` },
+    })
+    const adminPage = (admin.json() as { data: { total: number; list: Array<Record<string, any>> } }).data
+    assert.equal(adminPage.total, 1)
+    assert.equal(adminPage.list[0]?.operator_id, 2, '本人自助：operator_id = user_id')
+    assert.equal(adminPage.list[0]?.operator, 'u')
+    assert.equal(adminPage.list[0]?.from_override, -3)
+    assert.equal(adminPage.list[0]?.to_override, 3)
+    assert.equal(adminPage.list[0]?.cleared, false)
+
+    // 转回去后两端增量归零 ⇒ 覆盖行删掉（不是留一行 0），有效额度回到套餐值
+    const back = await app.inject({
+      method: 'POST', url: '/quota/transfer',
+      headers: { authorization: `Bearer ${userToken()}` },
+      payload: { from: 'demo_two', to: 'demo_one', amount: 3 },
+    })
+    assert.equal(back.statusCode, 200)
+    assert.equal(quota.overrideRaw(2, 'demo_one'), 0)
+    assert.equal(quota.overrideRaw(2, 'demo_two'), 0)
+    assert.equal(quota.overridesOf(2).length, 0)
+    assert.equal(quota.effectiveLimit(2, plan.id, 'demo_one'), 10)
+    assert.equal(quota.effectiveLimit(2, plan.id, 'demo_two'), 5)
+    // 成因文案与 Go gate.TransferErrorStatus 一致
+    const bad = await app.inject({
+      method: 'POST', url: '/quota/transfer',
+      headers: { authorization: `Bearer ${userToken()}` },
+      payload: { from: 'demo_one', to: 'demo_two', amount: 0 },
+    })
+    assert.equal(bad.statusCode, 400)
+    assert.equal((bad.json() as { msg: string }).msg, '转移数量必须是正整数')
+
     const cleared = await app.inject({ method: 'DELETE', url: '/quota/transfers', headers: { authorization: `Bearer ${userToken()}` } })
-    assert.equal((cleared.json() as { data: { cleared: number } }).data.cleared, 1)
+    assert.equal((cleared.json() as { data: { cleared: number } }).data.cleared, 2)
+    const afterSelf = await app.inject({ method: 'GET', url: '/quota/transfers', headers: { authorization: `Bearer ${userToken()}` } })
+    assert.equal((afterSelf.json() as { data: { total: number } }).data.total, 0, '本人不再看见')
+    const afterAdmin = await app.inject({
+      method: 'GET', url: '/admin/users/2/quota-transfers',
+      headers: { authorization: `Bearer ${adminToken()}` },
+    })
+    const audit = (afterAdmin.json() as { data: { total: number; list: Array<Record<string, any>> } }).data
+    assert.equal(audit.total, 2, '管理端审计面仍留着')
+    assert.ok(audit.list.every((r) => r.cleared === true))
   } finally {
     await app.close()
     rmSync(root, { recursive: true, force: true })

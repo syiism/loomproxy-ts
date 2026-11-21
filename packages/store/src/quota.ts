@@ -93,13 +93,39 @@ export class DbQuota {
     return this.db.all<LimitRow>('SELECT * FROM user_quota_overrides WHERE user_id = ? ORDER BY id', userId)
   }
 
-  setOverride(userId: number, scope: string, target: string, limit: number): void {
+  /**
+   * 写用户覆盖**增量**（Go putOverride 同口径）：正数追加、负数扣减，0 = 没有覆盖（删行而不是留 0）。
+   * 面板与转移都按增量解释；写绝对值会把「转 100 出去」变成「变成 100+套餐限额」。
+   */
+  setOverride(userId: number, scope: string, target: string, delta: number): void {
     const now = nowIso()
+    if (delta === 0) {
+      this.db.run('DELETE FROM user_quota_overrides WHERE user_id = ? AND scope = ? AND target IN (?)', userId, scope, target)
+      return
+    }
     this.db.run(
       `INSERT INTO user_quota_overrides (user_id, scope, target, "limit", created_at, updated_at) VALUES (?,?,?,?,?,?)
        ON CONFLICT(user_id, scope, target) DO UPDATE SET "limit" = excluded."limit", updated_at = excluded.updated_at`,
-      userId, scope, target, limit, now, now,
+      userId, scope, target, delta, now, now,
     )
+  }
+
+  /** 原始覆盖增量（没有行 = 0）；判定用 effectiveLimit，转移写库用这个 */
+  overrideRaw(userId: number, source: string): number {
+    return this.db.get<{ lim: number }>(
+      'SELECT "limit" AS lim FROM user_quota_overrides WHERE user_id = ? AND scope = ? AND target IN (?, \'*\') LIMIT 1',
+      userId, 'source', source,
+    )?.lim ?? 0
+  }
+
+  /** 套餐源限额；没有行 = -1（不限/未授权，访问轴另有判定） */
+  baseLimitOf(planId: number | null, source: string): number {
+    if (planId === null) return -1
+    const row = this.db.get<{ lim: number }>(
+      'SELECT "limit" AS lim FROM quota_limits WHERE plan_id = ? AND scope = ? AND target IN (?, \'*\') LIMIT 1',
+      planId, 'source', source,
+    )
+    return row ? row.lim : -1
   }
 
   clearOverrides(userId: number): number {
@@ -119,19 +145,11 @@ export class DbQuota {
   }
 
   /** 生效额度：覆盖优先，其次套餐；-1 = 不限（plan 里没有这一行时也回 -1） */
+  /** 有效日额度 = clamp(套餐限额 + 覆盖增量)；套餐不限（-1）时覆盖不生效（Go EffectiveSourceLimit 同口径） */
   effectiveLimit(userId: number, planId: number | null, source: string): number {
-    // `limit` 是 SQLite 保留字：列名与别名都要引号，别名再换一个非保留名
-    const ov = this.db.get<{ lim: number }>(
-      'SELECT "limit" AS lim FROM user_quota_overrides WHERE user_id = ? AND scope = ? AND target IN (?, \'*\') LIMIT 1',
-      userId, 'source', source,
-    )
-    if (ov) return ov.lim
-    if (planId === null) return -1
-    const row = this.db.get<{ lim: number }>(
-      'SELECT "limit" AS lim FROM quota_limits WHERE plan_id = ? AND scope = ? AND target IN (?, \'*\') LIMIT 1',
-      planId, 'source', source,
-    )
-    return row ? row.lim : -1
+    const base = this.baseLimitOf(planId, source)
+    if (base < 0) return -1
+    return Math.max(0, base + this.overrideRaw(userId, source))
   }
 
   /** 该源是否被任意套餐授权（= 有 quota_limits 行）：被引用就不许删源 */

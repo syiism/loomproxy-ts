@@ -4,7 +4,7 @@ import { fail, type RankBoard } from '@loomproxy/contract'
 import { createClock, type TtlCache } from '@loomproxy/kernel'
 import type { Config } from '@loomproxy/kernel'
 import { resolveIdentity } from '../auth.ts'
-import type { DataSourceStore } from '@loomproxy/store'
+import type { DataSourceStore, TransferRow } from '@loomproxy/store'
 import type { SourceHost } from '@loomproxy/source-host'
 import type { ApiStores } from '../stores.ts'
 import type { Ledger } from '@loomproxy/gate'
@@ -25,6 +25,35 @@ export const MONITOR_STARTED_AT = new Date().toISOString()
 export function displayName(username: string, names: Map<number, string>): string {
   const m = /^#(\d+)$/.exec(username)
   return m ? (names.get(Number(m[1])) ?? username) : (username || '')
+}
+
+/** 与 Go handlers/quota 的响应形状逐字段对齐（本人与管理员两副面孔不同） */
+export function selfTransferView(r: TransferRow) {
+  return {
+    id: r.id, from: r.from_code, to: r.to_code, amount: r.amount,
+    from_before: r.from_before, from_after: r.from_after,
+    to_before: r.to_before, to_after: r.to_after,
+    via: r.via, created_at: r.created_at,
+  }
+}
+
+export function adminTransferView(r: TransferRow, operatorName: string) {
+  return {
+    ...selfTransferView(r),
+    operator_id: r.operator_id, operator: operatorName,
+    from_override: r.from_override, to_override: r.to_override,
+    cleared: r.cleared_at !== null, cleared_at: r.cleared_at,
+  }
+}
+
+/** POST 响应：Go 用 from/to 两个对象，而不是平铺的 *_after 字段 */
+export function transferResultView(row: TransferRow, user?: { id: number; username: string }) {
+  const base = {
+    amount: row.amount,
+    from: { code: row.from_code, before: row.from_before, after: row.from_after },
+    to: { code: row.to_code, before: row.to_before, after: row.to_after },
+  }
+  return user ? { user_id: user.id, username: user.username, ...base } : { ...base, scope: '转移的是当日限额本身；已用量与流水不回改，新限额从下一次调用起生效' }
 }
 
 export async function requireAdmin(req: FastifyRequest, reply: FastifyReply, deps: Deps) {
