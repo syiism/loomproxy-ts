@@ -103,7 +103,7 @@ export class DbSessions implements SessionStore {
          SELECT id FROM (
            SELECT id, ROW_NUMBER() OVER (ORDER BY (last_active_at IS NULL), last_active_at DESC, id DESC) rn
              FROM sessions WHERE user_id = ? AND revoked_at IS NULL
-         ) WHERE rn > ?
+         ) ranked WHERE rn > ?
        )`,
       nowIso(), userId, maxKeep,
     ).changes
