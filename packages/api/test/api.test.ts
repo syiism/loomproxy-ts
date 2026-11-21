@@ -120,6 +120,7 @@ async function makeApp() {
   for (const r of [
     { code: 'admin', name: '管理员', description: '' },
     { code: 'user', name: '用户', description: '' },
+    { code: 'vip', name: 'VIP', description: '' },
   ]) {
     roles.create(r)
   }
@@ -128,6 +129,7 @@ async function makeApp() {
   const plan = plans.create({ name: '基础版', code: 'free' })
   users.create({ username: 'admin', password: 'secret-pass', planId: plan.id, roles: ['admin'] })
   users.create({ username: 'u', password: 'u-pass', planId: plan.id, roles: ['user'] })
+  users.create({ username: 'v', password: 'v-pass', planId: plan.id, roles: ['vip'] })
   // 匿名/免费档的授权：限额即授权，缺这一行匿名调用会被判 need_login
   quota.grant(plan.id, 'source', 'demo_one', 100)
   const app = buildServer({
@@ -225,6 +227,22 @@ test('/admin/stats 的 today_new 来自今日创建的用户（不是硬编码 0
     assert.equal(typeof d['today_new'], 'number')
     // makeApp 里 admin/alice 都是刚刚（今天）创建的，今日新增至少 2
     assert.ok(Number(d['today_new']) >= 2, `today_new=${d['today_new']}，应为今日新建用户数`)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('/admin/stats 的 vip_count 读角色码，normal_count 扣掉 VIP（Go 口径）', async () => {
+  const { app, root } = await makeApp()
+  try {
+    const res = await app.inject({ method: 'GET', url: '/admin/stats', headers: { authorization: `Bearer ${adminToken()}` } })
+    assert.equal(res.statusCode, 200)
+    const d = (res.json() as { data: Record<string, number> }).data
+    assert.equal(d['total_users'], 3)
+    assert.equal(d['admin_count'], 1)
+    assert.equal(d['vip_count'], 1, '库里 vip 角色的用户必须出现在响应里')
+    assert.equal(d['normal_count'], 1, 'total - admin - vip')
   } finally {
     await app.close()
     rmSync(root, { recursive: true, force: true })

@@ -15,13 +15,13 @@ export function registerAccountRoutes(app: FastifyInstance, deps: AdminContext):
   // ---- 总览 ----
   app.get('/admin/stats', async (req, reply) => {
     if (!(await guard(req, reply))) return
-    const s = stores.users?.stats() ?? { total: 0, active: 0, admin: 0, deleted: 0 }
+    const s = stores.users?.stats() ?? { total: 0, active: 0, admin: 0, vip: 0, deleted: 0 }
     return ok({
       total_users: s.total,
       admin_count: s.admin,
-      // 本 TS 部署还没有 VIP 角色语义（角色由管理员在「角色」页建）
-      vip_count: 0,
-      normal_count: Math.max(0, s.total - s.admin),
+      // VIP 是角色码 'vip'（与 Go 的 Stats 同口径，不是套餐码），角色从库里读
+      vip_count: s.vip,
+      normal_count: Math.max(0, s.total - s.admin - s.vip),
       // 今日新增：今日 0 点（平台时区，kernel/clock 单一事实源）起创建的用户数
       today_new: (stores.users as unknown as { todayNew?: (since: string) => number })?.todayNew?.(
         new Date(createClock(config.tzOffsetHours).startOfDay()).toISOString(),

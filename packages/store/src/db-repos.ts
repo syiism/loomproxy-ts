@@ -260,15 +260,20 @@ export class DbUsers implements UserStore {
     return this.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM users WHERE deleted_at IS NULL')?.n ?? 0
   }
 
-  stats(): { total: number; active: number; admin: number; deleted: number } {
+  stats(): { total: number; active: number; admin: number; vip: number; deleted: number } {
+    // 与 Go 的 Stats 同口径：按 roles.code 数，软删用户不算（GORM 的 User 有 DeletedAt，默认过滤）。
+    // 一个用户同时有 admin 与 vip 两角时两边各计一次，normal_count 因此可能为负——照 Go 口径，不自行修正。
+    const roleCount = (code: string): number =>
+      this.db.get<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM users u JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id
+          WHERE r.code = ? AND u.deleted_at IS NULL`,
+        code,
+      )?.n ?? 0
     return {
       total: this.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM users')?.n ?? 0,
       active: this.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM users WHERE status = 1 AND deleted_at IS NULL")?.n ?? 0,
-      admin:
-        this.db.get<{ n: number }>(
-          `SELECT COUNT(*) AS n FROM users u JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id
-            WHERE r.code = 'admin' AND u.deleted_at IS NULL`,
-        )?.n ?? 0,
+      admin: roleCount('admin'),
+      vip: roleCount('vip'),
       deleted: this.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM users WHERE deleted_at IS NOT NULL')?.n ?? 0,
     }
   }
