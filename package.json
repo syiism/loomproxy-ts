@@ -19,7 +19,8 @@
     "check:web-contract": "node tools/check-web-contract.mjs",
     "analyze:mysql": "node tools/analyze-mysql-traffic.mjs",
     "migrate:mysql": "node tools/mysql-to-sqlite.mjs",
-    "parity:write": "node tools/write-parity.mjs"
+    "parity:write": "node tools/write-parity.mjs",
+    "bump:plugin": "node tools/bump-plugin-version.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.19.0",
