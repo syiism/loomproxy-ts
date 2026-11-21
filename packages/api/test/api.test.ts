@@ -136,7 +136,7 @@ async function makeApp() {
     config, logger, upstream, host, dataSources, settings, limiter,
     users, roles, plans, sessions, apiKeys, callLogs, nameCache, quota, quotaExtra, sourceGroups, blockedIPs, devices,
   })
-  return { app, root, config, host, callLogs, nameCache, users, quota, plans, quotaExtra, blockedIPs, dataSources, sessions, apiKeys, roles, settings }
+  return { app, root, config, host, db, callLogs, nameCache, users, quota, plans, quotaExtra, blockedIPs, dataSources, sessions, apiKeys, roles, settings }
 }
 
 const adminToken = () => signToken({ user_id: 1, username: 'admin', roles: ['admin'] }, SECRET)
@@ -1275,11 +1275,10 @@ test('/admin/settings 形状：items + sensitive_keys（面板读 resp.items，�
   }
 })
 
-test('数据源 PATCH/DELETE：404/无字段/非法分组/rank_public 走设置名单/被套餐引用不许删', async () => {
-  const { app, root, settings, quota, plans, dataSources } = await makeApp()
+test('数据源 PATCH/DELETE：级联清引用，历史日志保留', async () => {
+  const { app, root, settings, quota, plans, quotaExtra, dataSources, db, callLogs, nameCache } = await makeApp()
   try {
     const H = { authorization: `Bearer ${adminToken()}` }
-    // 造一行源（插件 upsert 的等价物）
     const id = dataSources.create({ name: 'demo_3', display_name: '三号', category: 'demo', sort_order: 3 })
 
     assert.equal((await app.inject({ method: 'PATCH', url: '/admin/data-sources/9999', headers: H, payload: { display_name: 'x' } })).statusCode, 404)
@@ -1294,37 +1293,38 @@ test('数据源 PATCH/DELETE：404/无字段/非法分组/rank_public 走设置�
       '分组不存在',
     )
 
-    // 正常改 + rank_public（存设置名单，不是列）
     const patched = await app.inject({
-      method: 'PATCH',
-      url: `/admin/data-sources/${id}`,
-      headers: H,
+      method: 'PATCH', url: `/admin/data-sources/${id}`, headers: H,
       payload: { display_name: '三号改', status: 0, rank_public: true },
     })
     assert.equal(patched.statusCode, 200)
-    const row = (patched.json() as { data: { display_name: string; status: number; rank_public: boolean } }).data
-    assert.equal(row.display_name, '三号改')
-    assert.equal(row.status, 0)
-    assert.equal(row.rank_public, true)
-    assert.equal(settings.get('rank_public_sources'), 'demo_3', '榜单可见性落在设置名单上')
+    assert.equal(settings.get('rank_public_sources'), 'demo_3')
 
-    // 关闭榜单
-    const off = await app.inject({ method: 'PATCH', url: `/admin/data-sources/${id}`, headers: H, payload: { rank_public: false } })
-    assert.equal((off.json() as { data: { rank_public: boolean } }).data.rank_public, false)
-    assert.equal(settings.get('rank_public_sources'), '')
+    // 造齐各种引用：套餐授权 / 接口成本 / 用户覆盖 / 源配置 / 名称缓存 / 榜单名单
+    const planId = plans.list()[0]!.id
+    quota.grant(planId, 'source', 'demo_3', 10)
+    quotaExtra.upsertCostPlan({ plan_id: planId, group_code: 'demo_3', interface: 'search' })
+    quota.setOverride(2, 'source', 'demo_3', 5)
+    db.run('INSERT INTO platform_source_configs (source_name, base_url, updated_at) VALUES (?,?,?)', 'demo_3', 'https://x', 'now')
+    db.run('INSERT INTO user_source_configs (user_id, source_name, base_url, updated_at) VALUES (?,?,?,?)', 2, 'demo_3', 'https://y', 'now')
+    nameCache.rememberBook('demo_3', 'b1', '书名')
+    callLogs.append({ username: 'u', ip: '1.1.1.1', source: 'demo_3', action: 'search', status: 200, latency_ms: 1, in_band_error: false, in_band_reason: '', in_band_code: '', keyword: '', book_name: '', chapter_title: '', book_ident: '', chapter_ident: '', media_type: 'novel', result_count: 1, content_withheld: false, plugin_version: '1.0' })
 
-    // 被套餐引用 ⇒ 不许删（限额即授权）
-    quota.grant(plans.list()[0]!.id, 'source', 'demo_3', 10)
-    const blocked = await app.inject({ method: 'DELETE', url: `/admin/data-sources/${id}`, headers: H })
-    assert.equal(blocked.statusCode, 400)
-    assert.match((blocked.json() as { msg: string }).msg, /被套餐引用/)
-
-    // 解除引用后可删，且顺手摘榜单名单
-    settings.set('rank_public_sources', 'demo_3')
-    quota.removeLimit(quota.limitsOfPlan(plans.list()[0]!.id).find((l) => l.target === 'demo_3')!.id)
-    assert.equal((await app.inject({ method: 'DELETE', url: `/admin/data-sources/${id}`, headers: H })).statusCode, 200)
-    assert.equal(settings.get('rank_public_sources'), '')
+    // 以前会被「被套餐引用」挡下；现在级联删除所有引用
+    const del = await app.inject({ method: 'DELETE', url: `/admin/data-sources/${id}`, headers: H })
+    assert.equal(del.statusCode, 200)
+    assert.deepEqual((del.json() as { data: { removed: boolean; source: string } }).data, { removed: true, source: 'demo_3' })
     assert.equal(dataSources.get('demo_3'), undefined)
+    assert.equal(settings.get('rank_public_sources'), '')
+    assert.equal(quota.limitsOfPlan(planId).some((l) => l.target === 'demo_3'), false)
+    assert.equal(quota.costOf('demo_3', 'search'), undefined)
+    assert.equal(quota.overridesOf(2).some((o) => o.target === 'demo_3'), false)
+    assert.equal(db.get('SELECT COUNT(*) n FROM quota_cost_plans WHERE group_code=?', 'demo_3')?.n, 0)
+    assert.equal(db.get('SELECT COUNT(*) n FROM platform_source_configs WHERE source_name=?', 'demo_3')?.n, 0)
+    assert.equal(db.get('SELECT COUNT(*) n FROM user_source_configs WHERE source_name=?', 'demo_3')?.n, 0)
+    assert.equal(nameCache.lookupBook('demo_3', 'b1'), '')
+    // 历史是账本，不跟着删
+    assert.equal(callLogs.page({ source: 'demo_3', page: 1, pageSize: 20 }).total, 1)
   } finally {
     await app.close()
     rmSync(root, { recursive: true, force: true })

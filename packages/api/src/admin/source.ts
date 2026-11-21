@@ -140,25 +140,23 @@ export function registerSourceRoutes(app: FastifyInstance, deps: AdminContext): 
     const dsStore = deps.dataSources as unknown as {
       listAll?(): Array<{ id: number; name: string }>
       remove?(id: number): boolean
+      removeWithRefs?(id: number, name: string): boolean
     }
     const row = dsStore?.listAll?.().find((d) => d.id === Number(id))
     if (!row) {
       reply.code(404).send(fail(config.errorCode, '数据源不存在'))
       return
     }
-    // 「限额即授权」：被套餐引用的源不能删，否则那一行限额会指向一个看不见的源
-    if (stores.quota?.isSourceReferenced(row.name)) {
-      reply.code(400).send(fail(config.errorCode, '该数据源被套餐引用，无法删除'))
-      return
-    }
-    dsStore.remove?.(Number(id))
+    // 级联删除：套餐授权/接口成本/用户覆盖/定时/源配置/名称缓存一起清掉，不留下指向空源的垃圾行。
+    // 历史调用日志与额度流水是账本，保留（见 DbDataSources.removeWithRefs）。
+    dsStore.removeWithRefs?.(Number(id), row.name) ?? dsStore.remove?.(Number(id))
     // 顺手把它从公开榜放行名单里摘掉（源都没了，留着只会让名单越长越脏）
     try {
       setRankPublic(stores.settings, row.name, false)
     } catch {
       /* 设置存储不可用时不影响删除结果 */
     }
-    return ok({})
+    return ok({ removed: true, source: row.name })
   })
 
   // 平台默认地址（个人级在 /user/source-configs）：回落顺序 个人 → 平台 → 源内置

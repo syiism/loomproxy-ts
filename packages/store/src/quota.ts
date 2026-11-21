@@ -152,12 +152,7 @@ export class DbQuota {
     return Math.max(0, base + this.overrideRaw(userId, source))
   }
 
-  /** 该源是否被任意套餐授权（= 有 quota_limits 行）：被引用就不许删源 */
-  isSourceReferenced(source: string): boolean {
-    return (this.db.get<{ n: number }>(
-      'SELECT COUNT(*) AS n FROM quota_limits WHERE scope = ? AND target = ?', 'source', source,
-    )?.n ?? 0) > 0
-  }
+
 
   // ---- 用量 ----
   /** 当天已用（日界按用户起算点 quota_reset_at；没设就用自然日 0 点） */

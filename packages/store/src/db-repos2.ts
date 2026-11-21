@@ -203,6 +203,28 @@ export class DbDataSources implements DataSourceStore {
     // 只删行，不删历史日志（日志按 source 文本关联）
     return this.db.run('DELETE FROM data_sources WHERE id = ?', id).changes > 0
   }
+
+  /**
+   * 删除数据源 + 所有按 code 关联的配置/授权/成本/定时任务/源配置和名称缓存，同一个事务里完成。
+   * 历史审计（api_call_logs / api_call_stats / quota_usage_logs / quota_transfer_logs）按源文本关联，
+   * 是账本不是配置，一律保留——删掉等于毁掉"这个源过去做过什么"的证据。
+   * user_quota_overrides 的 SQL 故意写成 `scope = ? AND target IN (?)`：MysqlDb 的 overrideQueryFix
+   * 会把它翻成线上真实的 group_code 列。
+   */
+  removeWithRefs(id: number, name: string): boolean {
+    return this.db.tx(() => {
+      if (!this.db.run('DELETE FROM data_sources WHERE id = ?', id).changes) return false
+      this.db.run('DELETE FROM source_schedules WHERE data_source_id = ?', id)
+      this.db.run("DELETE FROM quota_limits WHERE scope = 'source' AND target = ?", name)
+      this.db.run('DELETE FROM quota_costs WHERE group_code = ?', name)
+      this.db.run('DELETE FROM quota_cost_plans WHERE group_code = ?', name)
+      this.db.run('DELETE FROM user_quota_overrides WHERE scope = ? AND target IN (?)', 'source', name)
+      this.db.run('DELETE FROM platform_source_configs WHERE source_name = ?', name)
+      this.db.run('DELETE FROM user_source_configs WHERE source_name = ?', name)
+      this.db.run('DELETE FROM name_cache WHERE source = ?', name)
+      return true
+    })
+  }
 }
 
 export class DbCallLogs implements CallLogStore {

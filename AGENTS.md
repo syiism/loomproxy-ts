@@ -99,7 +99,9 @@ PLUGIN_DIR=plugins node apps/server/src/main.ts          # ③ 起服务 → cur
 - 额度域三条不变量：①**限额即授权**（`quota_limits` 里 `scope='source'` 的一行同时决定"能不能用"与"用多少"）；
   ②生效顺序 `用户覆盖增量 + 套餐限额（下限 0） → -1(不限)`，覆盖写的是**增量**且 0=删行（Go
   putOverride/EffectiveSourceLimit 同口径），每次请求现取（改完立刻生效，不许烘进启动期）；
-  ③只有**成功且非带内失败**才记账，同内容在 `BILLING_DEDUPE_SEC` 内只扣一次。
+  ③只有**成功且非带内失败**才记账，同内容在 `BILLING_DEDUPE_SEC` 内只扣一次；
+  ④删除数据源走级联（`DbDataSources.removeWithRefs`）：授权/成本/覆盖/定时/源配置/名称缓存/榜单名单一起清，
+  历史调用日志与额度流水是账本，按源文本关联，**不删**。
 - `limit` 是 SQLite 保留字：列名与别名都要加引号（别名别再用 `limit`，踩过一次语法错误）。
 
 ## 7. 写代码的约定
