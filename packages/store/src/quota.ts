@@ -223,6 +223,11 @@ export class DbQuota {
     return { total, page: q.page, page_size: q.pageSize, list }
   }
 
+  /** 用户手工刷新过额度的时刻（没刷过为 null）——面板要和下发起算点一起回显 */
+  resetAt(userId: number): string | null {
+    return this.db.get<{ quota_reset_at: string | null }>('SELECT quota_reset_at FROM users WHERE id = ?', userId)?.quota_reset_at ?? null
+  }
+
   /** 日界起算点：users.quota_reset_at 优先，否则当天 0 点（平台时区见 kernel/clock） */
   startOfWindow(userId: number, tzOffsetHours: number): string {
     const raw = this.db.get<{ quota_reset_at: string | null }>('SELECT quota_reset_at FROM users WHERE id = ?', userId)?.quota_reset_at

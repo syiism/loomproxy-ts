@@ -171,36 +171,65 @@ export function registerAccountRoutes(app: FastifyInstance, deps: AdminContext):
       return
     }
     const q = stores.quota
+    // 形状照 Go GetUserQuota：面板（原样搬来的 web/）读 items/plan_name/usage_since，
+    // 少一格整张表就是空的（WORKLOG §6 的形状错位家族）。
     const since = q?.startOfWindow(user.id, config.tzOffsetHours) ?? new Date().toISOString()
-    const limits = (q?.limitsOfPlan(user.plan_id ?? 0) ?? []).filter((l) => l.scope === 'source')
-    const rows = limits.map((l) => {
-      const used = q?.usedSince(user.id, l.target, since) ?? 0
-      const override = q?.overridesOf(user.id).find((o) => o.target === l.target)
-      return {
-        source: l.target,
-        limit: override ? override.limit : l.limit,
-        plan_limit: l.limit,
-        override: override ? override.limit : null,
-        used,
-        remaining: Math.max(0, (override ? override.limit : l.limit) - used),
-      }
+    const plan = user.plan ?? stores.plans?.list().find((p) => p.code === 'free')
+    const planId = user.plan?.id ?? plan?.id ?? 0
+    const planLimits = new Map(
+      (q?.limitsOfPlan(planId) ?? []).filter((l) => l.scope === 'source').map((l) => [l.target, l.limit]),
+    )
+    const overrides = new Map(
+      (q?.overridesOf(user.id) ?? []).filter((o) => o.limit !== 0).map((o) => [o.target, o.limit]),
+    )
+    const sourceRows = (deps.dataSources as { listAll?(): unknown[] } | undefined)?.listAll?.() ?? deps.dataSources?.listEnabled() ?? []
+    const items = (sourceRows as Array<{ name: string; display_name: string; category: string }>)
+      .map((ds) => {
+        const granted = planLimits.has(ds.name)
+        const planLimit = granted ? planLimits.get(ds.name)! : null
+        const userLimit = overrides.has(ds.name) ? overrides.get(ds.name)! : null
+        return {
+          source_code: ds.name,
+          source_name: ds.display_name,
+          category: ds.category,
+          granted,
+          plan_limit: planLimit,
+          used: q?.usedSince(user.id, ds.name, since) ?? 0,
+          user_limit: userLimit,
+          // 未授权的源给 -1，面板按 granted=false 显示「无权限」，不能让它被读成「不限」
+          effective: !granted ? -1 : q?.effectiveLimit(user.id, planId, ds.name) ?? -1,
+        }
+      })
+      .sort((a, b) => a.category.localeCompare(b.category) || a.source_name.localeCompare(b.source_name))
+    return ok({
+      user_id: user.id,
+      username: user.username,
+      plan_name: plan?.name ?? '',
+      plan_code: plan?.code ?? '',
+      plan_alias: '', // 业务别名表未随仓库迁移；面板只在非空时显示
+      quota_reset_at: q?.resetAt(user.id) ?? null,
+      usage_since: since,
+      items,
     })
-    return ok({ user_id: user.id, plan: user.plan, since, rows })
   })
 
   app.put('/admin/users/:id/quota', async (req, reply) => {
     if (!(await guard(req, reply))) return
     const { id } = req.params as { id: string }
-    const b = (req.body ?? {}) as { overrides?: Array<{ source?: string; target?: string; limit?: number }> }
+    const b = (req.body ?? {}) as { overrides?: Array<{ group_code?: string; limit?: number }> }
     const q = stores.quota
     if (!q) return unavailable(reply, '额度存储未接')
-    q.clearOverrides(Number(id))
-    for (const o of b.overrides ?? []) {
-      const target = o.source ?? o.target
-      if (!target) continue
-      q.setOverride(Number(id), 'source', target, o.limit ?? 0)
+    if (!Array.isArray(b.overrides)) {
+      reply.code(400).send(fail(config.errorCode, '缺少 overrides'))
+      return
     }
-    return ok({})
+    // 与 Go UpdateUserQuota 同口径：只改这次提交的源，**不清空其它覆盖**；limit=0 删行
+    for (const o of b.overrides) {
+      const target = String(o.group_code ?? '').trim()
+      if (!target) continue
+      q.setOverride(Number(id), 'source', target, Math.trunc(Number(o.limit ?? 0)))
+    }
+    return ok({ message: '额度覆盖已更新' })
   })
 
   app.post('/admin/users/:id/refresh-quota', async (req, reply) => {

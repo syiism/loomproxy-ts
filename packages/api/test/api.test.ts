@@ -249,6 +249,41 @@ test('/admin/stats 的 vip_count 读角色码，normal_count 扣掉 VIP（Go 口
   }
 })
 
+
+test('/admin/users/:id/quota 回面板读的 items 形状；PUT 只改提交的源', async () => {
+  const { app, root, quota, plans, dataSources } = await makeApp()
+  try {
+    dataSources.upsert({ code: 'demo_two', display: '演示二号', category: 'demo', sort_order: 2, status: 1, actions: ['search'], fixed_base_url: false })
+    const plan = plans.list()[0]!
+    quota.grant(plan.id, 'source', 'demo_one', 10)
+    quota.grant(plan.id, 'source', 'demo_two', 20)
+    quota.setOverride(2, 'source', 'demo_one', -3)
+    quota.setOverride(2, 'source', 'demo_two', 7)
+
+    const H = { authorization: `Bearer ${adminToken()}` }
+    const res = await app.inject({ method: 'GET', url: '/admin/users/2/quota', headers: H })
+    assert.equal(res.statusCode, 200)
+    const data = (res.json() as { data: Record<string, any> }).data
+    assert.ok(Array.isArray(data.items), '面板读 items，不是 rows')
+    assert.ok(data.items.length >= 2)
+    assert.ok(data.plan_name && data.usage_since)
+    const one = data.items.find((i: any) => i.source_code === 'demo_one')
+    assert.deepEqual([one.granted, one.plan_limit, one.user_limit, one.effective], [true, 10, -3, 7])
+
+    const put = await app.inject({
+      method: 'PUT', url: '/admin/users/2/quota', headers: H,
+      payload: { overrides: [{ group_code: 'demo_one', limit: -2 }] },
+    })
+    assert.equal(put.statusCode, 200)
+    assert.equal((put.json() as { data: { message: string } }).data.message, '额度覆盖已更新')
+    assert.equal(quota.overrideRaw(2, 'demo_one'), -2)
+    assert.equal(quota.overrideRaw(2, 'demo_two'), 7, '没提交的源不清空')
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('/admin/monitor 回完整形状（面板 overview/items/recent），不是 {stats,total}', async () => {
   const { app, root } = await makeApp()
   try {
