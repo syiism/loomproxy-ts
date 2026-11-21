@@ -35,7 +35,7 @@ web                 —  **原 Go 项目面板原样搬入**（Vue3 + Vite，781
                       api 方法、monitor 的 plugin_version 筛选；产物 web/dist 由 server 托管
 ```
 
-**已落地的源包**：14 个，源码直接住 `plugins/<code>/`（单版本，manifest 里带 `version`）；
+**已落地的源包**：17 个（含番茄 5 形态），源码直接住 `plugins/<code>/`（单版本，manifest 里带 `version`）；
 host 扫这个目录，没有打包/依赖同步步骤；运行时 SDK 由宿主注入，插件包里没有 SDK/zod 副本。
 
 依赖矩阵与禁反向依赖的规则在 `tools/check-layers.mjs`（`pnpm check:layers`）。
@@ -79,7 +79,7 @@ Node 24 直接跑 `.ts`（type stripping），所以**用例不需要构建**；
 | 插件目录 `fs.watch` → 只 reload 变动源（**不重启进程**） | ✅ `apps/server` |
 | 面板：原 Go 面板全量搬入 + 「源插件」新页；登录/用户/角色/设置/数据源/监控/明细 已接真库 | ✅ `web` |
 | 调用明细 `plugin_version` 列（④ §7 批准的那一格） | ✅ 出口 hook 记账 + `/admin/monitor/history` |
-| 源包实现 | ✅ 14 个源插件（SDK 2：源码即插件，随 `plugins/<code>/` 单版本部署），四动作实网派发 |
+| 源包实现 | ✅ 17 个源插件（SDK 2：源码即插件，单版本部署）；番茄 5 形态由 fq-hg-mini 派生，hg_drama 退役 |
 | **号池运行时** | ✅ `packages/pool`（墙钟/摊薄两形态、冷热/耗尽/死号/冷却、维护协程、快照脱敏）；fq_novel 的会话池已接入（spread 型，建号走 device_register，取号写 pinned 会话） |
 | **数据库读写** | ✅ SQLite（`node:sqlite` 内置，无 native/cgo）：users/roles/user_roles/sessions/api_keys/system_settings/data_sources/plans/api_call_logs/api_call_stats/quota_limits/user_quota_overrides/quota_usage_logs/quota_costs，DDL 在 `packages/store/src/sqlite.ts` |
 | **内置系统设置（29 条）** | ✅ 键/初值/类型/说明对齐 Go `db/seed.go`；**且真的生效**：`announcement`（/announcement 横幅）、`register_enabled`（注册开关）、`default_role`/`default_quota_plan`（新用户）、`email_domain_allowlist/blocklist`（后缀匹配，白名单优先）、`maintenance_mode`（数据面 503，管理员放行）、`verify_code_scenes`（/verify/config 下发场景）、`jwt_expire_hours`（登录有效期，-1 永不过期） |

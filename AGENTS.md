@@ -13,7 +13,7 @@
    `omitempty` → `undefined`（不是 `null`）、字段名逐字照抄。改任何一条都算破坏前端（① §1）。
 4. **Node strip-only 语法**：不用 `enum` / `namespace` / 构造器参数属性 / 装饰器。
    类型导入一律 `import type`（`verbatimModuleSyntax`）。
-5. **源码即插件（SDK 2）**：14 个源包直接住在 `plugins/<code>/`（单版本；`version` 写在 manifest 里，
+5. **源码即插件（SDK 2）**：17 个源包直接住在 `plugins/<code>/`（番茄 5 形态：fq_novel/audio/comic/drama/manju）（单版本；`version` 写在 manifest 里，
    多版本由开发者/外部发布系统维护）。插件只做 `import type`；运行时 SDK helper 由宿主在工厂
    `export default (sdk) => ({handlers})` 调用时注入（经 `src/sdk.ts` 桥）。插件目录里不许有
    `<version>/`、`deps/`、`node_modules/` 或软链；第三方依赖只留该源独有且宿主不提供的纯 JS 包。
