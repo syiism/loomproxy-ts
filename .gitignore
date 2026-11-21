@@ -5,7 +5,7 @@ node_modules/
 !.env.example
 data/
 dist/
-# 插件目录（方案 B：源码即插件；是否纳管 git 待单独决策，暂保留 .gitkeep）
+# 插件目录（SDK 2：源码即插件单版本；是否纳管 git 待单独决策，暂保留 .gitkeep）
 plugins/*/
 !plugins/.gitkeep
 

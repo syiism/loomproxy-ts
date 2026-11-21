@@ -1,5 +1,5 @@
 // 夹具插件（不是数据源实现）：只用来验宿主的分层/换代/回滚
-export default {
+export default (sdk) => ({
   handlers: {
     search: async (ctx) => ({
       bookList: [
@@ -18,4 +18,4 @@ export default {
     content: async () => ({ contentType: 'novel', data: { content: 'v1 body' } }),
   },
   onBoot: (ctx) => ctx.log('v1 boot'),
-}
+})

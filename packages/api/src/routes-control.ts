@@ -196,16 +196,6 @@ export function registerControlRoutes(app: FastifyInstance, deps: ControlDeps): 
     return ok(deps.host.info())
   })
 
-  app.get('/admin/sources/versions', async (req, reply) => {
-    if (!(await adminOnly(req, reply, config, deps.stores))) return
-    const q = req.query as Record<string, string>
-    return ok({
-      page: clampPage(q['page']),
-      page_size: clampPageSize(q['page_size']),
-      versions: deps.host.latestVersions(),
-    })
-  })
-
   app.post('/admin/sources/reload-all', async (req, reply) => {
     if (!(await adminOnly(req, reply, config, deps.stores))) return
     const results = []
@@ -220,29 +210,6 @@ export function registerControlRoutes(app: FastifyInstance, deps: ControlDeps): 
   })
 
   /**
-   * 安装插件（面板「源插件 → 添加插件」）：提交 manifest 与入口文件的内容，服务端校验后
-   * 写进 PLUGIN_DIR/<code>/<version>/ 并立即换代。
-   *
-   * 为什么不是"上传 zip"：解压要引入依赖，还要自己防 zip-slip；这里收的是逐个文件的文本，
-   * 路径校验只有一处（host.install 的 safeRelPath），面板也只需要两个文本框。
-   * **权限**：安装插件等于允许在进程内执行任意代码——只有管理员能做，且这条不开给 API Key。
-   */
-  app.post('/admin/sources/install', { bodyLimit: 4 * 1024 * 1024 }, async (req, reply) => {
-    if (!(await adminOnly(req, reply, config, deps.stores))) return
-    const b = (req.body ?? {}) as { code?: string; version?: string; files?: Record<string, string> }
-    if (!b.code || !b.version || !b.files || typeof b.files !== 'object') {
-      reply.code(400).send(fail(config.errorCode, '缺少 code / version / files'))
-      return
-    }
-    try {
-      const info = await deps.host.install({ code: b.code, version: b.version, files: b.files })
-      return ok(info)
-    } catch (e) {
-      reply.code(400).send(fail(config.errorCode, e instanceof Error ? e.message : String(e)))
-    }
-  })
-
-  /**
    * 安装插件包（zip）：面板选文件 → base64 → 这里解包 → 与 install 同一条写盘/换代路径。
    * 收 zip 而不是收文件内容：真实插件包不止两个文件（`data/*.json` 数据字典、
    * 多模块入口），逐个贴文本框不现实；解压面在 source-host 的 zip.ts（stored/deflate 两种，
@@ -250,7 +217,7 @@ export function registerControlRoutes(app: FastifyInstance, deps: ControlDeps): 
    */
   app.post('/admin/sources/install-package', { bodyLimit: 16 * 1024 * 1024 }, async (req, reply) => {
     if (!(await adminOnly(req, reply, config, deps.stores))) return
-    const b = (req.body ?? {}) as { package?: string; version?: string }
+    const b = (req.body ?? {}) as { package?: string }
     if (!b.package || typeof b.package !== 'string') {
       reply.code(400).send(fail(config.errorCode, '缺少 package（zip 的 base64）'))
       return
@@ -265,28 +232,22 @@ export function registerControlRoutes(app: FastifyInstance, deps: ControlDeps): 
       return
     }
     try {
-      const info = await deps.host.installPackage({
-        bytes: new Uint8Array(bytes),
-        ...(b.version ? { version: b.version } : {}),
-      })
+      const info = await deps.host.installPackage({ bytes: new Uint8Array(bytes) })
       return ok(info)
     } catch (e) {
       reply.code(400).send(fail(config.errorCode, e instanceof Error ? e.message : String(e)))
     }
   })
 
-  for (const op of ['reload', 'rollback'] as const) {
-    app.post(`/admin/sources/:code/${op}`, async (req, reply) => {
-      if (!(await adminOnly(req, reply, config, deps.stores))) return
-      const { code } = req.params as { code: string }
-      try {
-        const info = op === 'reload' ? await deps.host.reload(code) : await deps.host.rollback(code)
-        return ok(info)
-      } catch (e) {
-        reply.code(400).send(fail(config.errorCode, e instanceof Error ? e.message : String(e)))
-      }
-    })
-  }
+  app.post('/admin/sources/:code/reload', async (req, reply) => {
+    if (!(await adminOnly(req, reply, config, deps.stores))) return
+    const { code } = req.params as { code: string }
+    try {
+      return ok(await deps.host.reload(code))
+    } catch (e) {
+      reply.code(400).send(fail(config.errorCode, e instanceof Error ? e.message : String(e)))
+    }
+  })
 
   app.post('/admin/sources/:code/disable', async (req, reply) => {
     if (!(await adminOnly(req, reply, config, deps.stores))) return

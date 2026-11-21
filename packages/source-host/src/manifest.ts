@@ -1,10 +1,11 @@
 // manifest 校验：插件目录里的 manifest.json 就是声明位（迁移-TS-4 §3）。
-// 校验不过 = 拒绝加载并保留老代；不许"尽力加载"。
-import { readFileSync, readdirSync, existsSync } from 'node:fs'
+// SDK 2 起服务只认单版本：plugins/<code>/ 下直接是 manifest.json，不再有 <version>/ 子目录；
+// 多版本由开发者/发布系统在外部维护（换目录 → reload），这里只校验"当前这一份"。
+import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { pluginManifestSchema, type PluginManifest } from '@loomproxy/contract'
 
-export type PluginVersionDir = {
+export type PluginDir = {
   code: string
   version: string
   dir: string
@@ -12,27 +13,7 @@ export type PluginVersionDir = {
   manifest: PluginManifest
 }
 
-/** 语义化版本比较（够用即可：只比数字段，预发布后缀按字符串兜底） */
-export function compareVersion(a: string, b: string): number {
-  const pa = a.split(/[.\-+]/)
-  const pb = b.split(/[.\-+]/)
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const x = pa[i]
-    const y = pb[i]
-    if (x === undefined) return -1
-    if (y === undefined) return 1
-    const nx = Number(x)
-    const ny = Number(y)
-    if (Number.isFinite(nx) && Number.isFinite(ny)) {
-      if (nx !== ny) return nx - ny
-      continue
-    }
-    if (x !== y) return x.localeCompare(y)
-  }
-  return 0
-}
-
-/** sdk_version 只校验主版本：`^1` / `1.x` / `1.0.0` 都接受 1.x 宿主 */
+/** sdk_version 只校验主版本：`^2` / `2.x` / `2.0.0` 都接受 2.x 宿主 */
 export function sdkCompatible(range: string, sdkMajor: number): boolean {
   const m = /(\d+)/.exec(range)
   if (!m) return false
@@ -46,17 +27,13 @@ export function readManifest(dir: string): PluginManifest {
   return pluginManifestSchema.parse(raw)
 }
 
-/** 扫一个插件的版本目录（<pluginDir>/<code>/<version>/） */
-export function listVersions(pluginCodeDir: string): string[] {
-  return readdirSync(pluginCodeDir, { withFileTypes: true })
-    .filter((d) => d.isDirectory())
-    .map((d) => d.name)
-    .filter((n) => /^\d+\.\d+/.test(n))
-    .sort(compareVersion)
-}
-
-export function describeVersion(pluginCodeDir: string, version: string): PluginVersionDir {
-  const dir = join(pluginCodeDir, version)
-  const manifest = readManifest(dir)
-  return { code: manifest.meta.code, version, dir, entry: join(dir, manifest.entry), manifest }
+export function describePlugin(codeDir: string): PluginDir {
+  const manifest = readManifest(codeDir)
+  return {
+    code: manifest.meta.code,
+    version: manifest.version,
+    dir: codeDir,
+    entry: join(codeDir, manifest.entry),
+    manifest,
+  }
 }

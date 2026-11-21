@@ -1,0 +1,13 @@
+{
+  "sdk_version": "^2",
+  "version": "1.0.0",
+  "entry": "./index.mjs",
+  "meta": {
+    "code": "throws",
+    "display": "导入就崩",
+    "category": "fixture",
+    "actions": [
+      "search"
+    ]
+  }
+}

@@ -118,9 +118,9 @@ for (const top of [PKG, APP]) {
   }
 }
 
-// 规则 1b：plugins/<code>/ 是独立插件（源码即插件），单独扫它的版本目录与 deps。
-// 不允许软链（拷到别的机器就断）、不允许 node_modules 下的 .ts（Node strip-types 拒绝加载）、
-// 版本目录不许裸 @loomproxy/* import（独立目录没有 workspace 解析链）。
+// 规则 1b：SDK 2 插件 = plugins/<code>/ 单版本目录（源码即插件）。
+// 不允许软链/版本目录/deps（拷走就断、服务只认当前一份）；运行时不许从 @loomproxy/* 导入值——
+// SDK 由宿主在工厂调用时注入，插件源码只能 `import type`（Node strip-types 会把类型导入擦掉）。
 const PLUGINS = join(ROOT, 'plugins')
 if (existsSync(PLUGINS)) {
   for (const code of readdirSync(PLUGINS, { withFileTypes: true })) {
@@ -139,7 +139,10 @@ if (existsSync(PLUGINS)) {
         }
         const p = join(dir, e.name)
         if (e.isDirectory()) {
-          if (e.name === 'node_modules' || e.name === '.git') continue
+          if (['node_modules', 'deps', '.git'].includes(e.name) || /^\d+\.\d+/.test(e.name)) {
+            report(`plugins/${code.name}/${e.name}：SDK 2 插件只有单版本目录，不许有 deps/、node_modules/ 或 <version>/`)
+            continue
+          }
           walkPlugin(p)
         } else if (/\.(ts|mjs|js)$/.test(e.name)) files.push(p)
       }
@@ -152,22 +155,31 @@ if (existsSync(PLUGINS)) {
         continue
       }
       const src = readFileSync(file, 'utf8')
-      const inVersion = /^plugins\/[^/]+\/\d+\./.test(rel)
+      const inSrc = /^plugins\/[^/]+\/src\//.test(rel)
       let m
       IMPORT_RE.lastIndex = 0
       while ((m = IMPORT_RE.exec(src)) !== null) {
         const spec = m[1]
         if (!spec) continue
         if (spec.startsWith('.')) {
-          const target = join(dirname(file), spec)
-          if (!resolve(target).startsWith(resolve(codeDir) + '/')) report(`${rel} 的相对 import 跑出了本插件：${spec}`)
+          // 只有运行期 src/** 不允许跑出插件目录；test/** 是开发期夹具，允许引用仓库根 packages
+          if (inSrc) {
+            const target = join(dirname(file), spec)
+            if (!resolve(target).startsWith(resolve(codeDir) + '/')) report(`${rel} 的相对 import 跑出了本插件：${spec}`)
+          }
           continue
         }
         const nm = /^@loomproxy\/(.+)$/.exec(spec)
         if (!nm) continue
-        if (inVersion) report(`${rel} 用了裸 ${spec}：版本目录要写相对 deps/ 路径（见 tools/sync-plugin-deps.mjs）`)
         const dep = nm[1]
         if (dep !== 'plugins' && !ALLOW.plugins.includes(dep)) report(`${rel} 违反漏斗：plugins 依赖了 ${dep}`)
+        if (inSrc) {
+          // 只有 `import type ... from '@loomproxy/*'` 合法；值导入必须由宿主注入
+          const head = src.slice(Math.max(0, m.index - 200), m.index)
+          if (!/\bimport\s+type\b[^;]*$/.test(head)) {
+            report(`${rel} 从 ${spec} 导入了运行时值：SDK 2 只能 import type，helper 用 sdk.*（由宿主注入）`)
+          }
+        }
       }
     }
   }

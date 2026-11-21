@@ -1,12 +1,12 @@
 import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
-import { cpSync, mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadConfig, silentLogger, Upstream } from '@loomproxy/kernel'
 import { SourceRegistry } from '@loomproxy/source-kit'
 import { InMemoryDataSources, InMemorySettings } from '@loomproxy/store'
-import { SourceHost, compareVersion, sdkCompatible } from '../src/index.ts'
+import { SourceHost, sdkCompatible } from '../src/index.ts'
 
 const FIXTURES = join(import.meta.dirname, 'fixtures')
 
@@ -31,18 +31,17 @@ function makeHost(pluginDir: string, drainTimeoutMs = 2_000) {
 function tmpPlugins(extra: string[] = []): string {
   const dir = mkdtempSync(join(tmpdir(), 'loomproxy-plugins-'))
   // worker 夹具会起真实线程：只在需要它的用例里拷（否则临时目录一删，worker 的 import 就变成未处理拒绝）
-  for (const name of ['ok_one', 'bad_manifest', 'bad_sdk', 'throws', ...extra]) {
+  for (const name of ['ok_one', 'ok_one_v1', 'bad_manifest', 'bad_sdk', 'throws', ...extra]) {
     cpSync(join(FIXTURES, name), join(dir, name), { recursive: true })
   }
   return dir
 }
 
-test('版本比较与 SDK 兼容：只认主版本', () => {
-  assert.ok(compareVersion('1.0.0', '1.1.0') < 0)
-  assert.ok(compareVersion('1.10.0', '1.9.0') > 0)
-  assert.equal(compareVersion('1.0.0', '1.0.0'), 0)
-  assert.equal(sdkCompatible('^1', 1), true)
-  assert.equal(sdkCompatible('^9', 1), false)
+test('SDK 兼容：只认主版本（SDK 2 的插件不被 1.x 宿主接受）', () => {
+  assert.equal(sdkCompatible('^2', 2), true)
+  assert.equal(sdkCompatible('2.x', 2), true)
+  assert.equal(sdkCompatible('^1', 2), false)
+  assert.equal(sdkCompatible('^9', 2), false)
 })
 
 test('扫描：好插件 active，坏 manifest / 坏 sdk / 导入抛错各留 failed 记录且不拖垮别人', async () => {
@@ -54,7 +53,7 @@ test('扫描：好插件 active，坏 manifest / 坏 sdk / 导入抛错各留 fa
 
     const ok = byCode.get('ok_one')
     assert.equal(ok?.state, 'active')
-    assert.equal(ok?.version, '1.1.0', '默认加载最新版本')
+    assert.equal(ok?.version, '1.1.0', '单版本目录：manifest 里的 version')
     assert.equal(dataSources.get('ok_one')?.display_name, '夹具一号')
     assert.equal(settings.get('fixture_mode'), 'v2', '声明位里的设置项在加载时落行')
 
@@ -69,22 +68,29 @@ test('扫描：好插件 active，坏 manifest / 坏 sdk / 导入抛错各留 fa
   }
 })
 
-test('回滚：版本指针回到上一代，正文随之变化（进程不重启）', async () => {
+test('外部换目录 + reload：多版本由外部管理，服务只认当前这一份', async () => {
   const dir = tmpPlugins()
   try {
+    const v2 = join(dir, 'ok_one_v2')
+    cpSync(join(dir, 'ok_one'), v2, { recursive: true })
     const { host, registry } = makeHost(dir)
     await host.scanSync()
     const before = registry.resolve('ok_one', 'content')
     const body1 = (await before!.handler({ params: {}, settings: {} as never } as never)) as { data: { content: string } }
     assert.equal(body1.data.content, 'v2 body')
 
-    const info = await host.rollback('ok_one')
+    // 外部用 v1 目录原子替换当前目录，再让服务 reload
+    rmSync(join(dir, 'ok_one'), { recursive: true, force: true })
+    cpSync(join(dir, 'ok_one_v1'), join(dir, 'ok_one'), { recursive: true })
+    const info = await host.reload('ok_one')
     assert.equal(info.version, '1.0.0')
     const after = registry.resolve('ok_one', 'content')
     const body2 = (await after!.handler({ params: {}, settings: {} as never } as never)) as { data: { content: string } }
     assert.equal(body2.data.content, 'v1 body')
 
-    // reload 回到最新
+    // 外部换回 v2 再 reload
+    rmSync(join(dir, 'ok_one'), { recursive: true, force: true })
+    cpSync(v2, join(dir, 'ok_one'), { recursive: true })
     const back = await host.reload('ok_one')
     assert.equal(back.version, '1.1.0')
   } finally {
@@ -99,19 +105,16 @@ test('坏版本不顶掉老代：reload 失败保留当前版本并记 last_erro
     await host.scanSync()
     assert.equal(registry.get('ok_one')?.version, '1.1.0')
 
-    // 新版本 manifest 非法
-    mkdirSync(join(dir, 'ok_one', '1.2.0'), { recursive: true })
-    writeFileSync(join(dir, 'ok_one', '1.2.0', 'manifest.json'), JSON.stringify({ sdk_version: '^1', entry: './x.mjs' }))
-    writeFileSync(join(dir, 'ok_one', '1.2.0', 'x.mjs'), 'export default { handlers: { search: async () => ({ bookList: [] }) } }')
-
+    // 外部替换目录时塞了坏 manifest：reload 失败但老代继续服务
+    const good = readFileSync(join(dir, 'ok_one', 'manifest.json'), 'utf8')
+    writeFileSync(join(dir, 'ok_one', 'manifest.json'), JSON.stringify({ sdk_version: '^2', version: '9.9.9', entry: './index.mjs' }))
     await assert.rejects(() => host.reload('ok_one'))
     assert.equal(registry.get('ok_one')?.version, '1.1.0', '老代仍在服务')
     assert.equal(registry.get('ok_one')?.state, 'active')
     const info = host.info().find((i) => i.code === 'ok_one')
     assert.match(info?.last_error ?? '', /manifest|meta|actions/i)
-    // 回滚仍指向上一代
-    const rb = await host.rollback('ok_one')
-    assert.equal(rb.version, '1.0.0')
+    writeFileSync(join(dir, 'ok_one', 'manifest.json'), good)
+    assert.equal((await host.reload('ok_one')).version, '1.1.0')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -122,8 +125,10 @@ test('drain：换代等问题身上的在飞请求走完（在飞期间不换指
   try {
     const { host, registry } = makeHost(dir, 3_000)
     await host.scanSync()
-    await host.rollback('ok_one') // 先退到 1.0.0，这样 reload 才是"真换代"
-    assert.equal(registry.get('ok_one')?.version, '1.0.0')
+    // 外部换成 v1 目录，reload 才是一次"真换代"
+    rmSync(join(dir, 'ok_one'), { recursive: true, force: true })
+    cpSync(join(dir, 'ok_one_v1'), join(dir, 'ok_one'), { recursive: true })
+    assert.equal(registry.get('ok_one')?.version, '1.1.0')
 
     host.begin('ok_one') // 模拟一个还在这代上的请求
     const started = Date.now()
@@ -137,7 +142,7 @@ test('drain：换代等问题身上的在飞请求走完（在飞期间不换指
     host.end('ok_one')
     await p
     assert.ok(Date.now() - started >= 100)
-    assert.equal(registry.get('ok_one')?.version, '1.1.0')
+    assert.equal(registry.get('ok_one')?.version, '1.0.0')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -193,12 +198,13 @@ test('worker 隔离：插件跑在独立线程里，宿主按 invoke 调用并�
 test('worker 里的源也能读到自己的敏感设置（快照不许用面板视角的抹值列表）', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'loomproxy-worker-settings-'))
   try {
-    const v = join(dir, 'worker_cfg', '1.0.0')
+    const v = join(dir, 'worker_cfg')
     mkdirSync(v, { recursive: true })
     writeFileSync(
       join(v, 'manifest.json'),
       JSON.stringify({
-        sdk_version: '^1',
+        sdk_version: '^2',
+        version: '1.0.0',
         isolation: 'worker',
         entry: './index.mjs',
         params: { search: ['key'] },
@@ -213,7 +219,7 @@ test('worker 里的源也能读到自己的敏感设置（快照不许用面板�
     )
     writeFileSync(
       join(v, 'index.mjs'),
-      `export default { handlers: { search: async (ctx) => ({ bookList: [], secret: ctx.settings.get('w_secret') }) } }`,
+      `export default (sdk) => ({ handlers: { search: async (ctx) => ({ bookList: [], secret: ctx.settings.get('w_secret') }) } })`,
     )
     const { host, registry, settings } = makeHost(dir)
     const infos = await host.scanSync()
@@ -243,12 +249,13 @@ test('worker 的取数走主线程桥：worker 里没有自己的 undici，缓�
   const port = (server.address() as { port: number }).port
 
   const dir = mkdtempSync(join(tmpdir(), 'loomproxy-worker-bridge-'))
-  const v = join(dir, 'worker_fetch', '1.0.0')
+  const v = join(dir, 'worker_fetch')
   mkdirSync(v, { recursive: true })
   writeFileSync(
     join(v, 'manifest.json'),
     JSON.stringify({
-      sdk_version: '^1',
+      sdk_version: '^2',
+      version: '1.0.0',
       isolation: 'worker',
       entry: './index.mjs',
       params: { search: ['key'] },
@@ -257,10 +264,10 @@ test('worker 的取数走主线程桥：worker 里没有自己的 undici，缓�
   )
   writeFileSync(
     join(v, 'index.mjs'),
-    `export default { handlers: { search: async (ctx) => {
+    `export default (sdk) => ({ handlers: { search: async (ctx) => {
        const body = await ctx.fetch.text(ctx.params.key, {});
        return { bookList: [{ bookId: 'x', name: body, author: '', kind: '', wordCount: '', lastChapter: '', intro: '', coverUrl: '' }] };
-     } } }`,
+     } } })`,
   )
 
   try {

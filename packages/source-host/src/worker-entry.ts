@@ -3,9 +3,10 @@
 import { parentPort, workerData } from 'node:worker_threads'
 import { pathToFileURL } from 'node:url'
 import { ClientCanceled, UpstreamError } from '@loomproxy/contract'
+import { createPluginSdk } from '@loomproxy/source-kit'
 import type { BridgeFromWorker, BridgeRequest, BridgeError, FetchKind, FetchOpts } from './bridge.ts'
 import { serError } from './bridge.ts'
-import type { HandlerContext, SourceDefinition } from '@loomproxy/source-kit'
+import type { HandlerContext, PluginFactory, SourceDefinition } from '@loomproxy/source-kit'
 
 const port = parentPort
 if (!port) throw new Error('worker-entry 必须在 worker_threads 里运行')
@@ -104,9 +105,10 @@ function ctx(action: string, params: Record<string, string>, settings: Record<st
 }
 
 async function boot(): Promise<void> {
-  const mod = (await import(pathToFileURL(workerData.entry as string).href)) as { default?: SourceDefinition }
-  def = mod.default
-  if (!def?.handlers) throw new Error('插件入口必须 export default defineSource({...})')
+  const mod = (await import(pathToFileURL(workerData.entry as string).href)) as { default?: PluginFactory }
+  if (typeof mod.default !== 'function') throw new Error('插件入口必须 export default (sdk) => ({ handlers })（SDK 2）')
+  def = mod.default(createPluginSdk())
+  if (!def?.handlers) throw new Error('插件工厂必须返回 { handlers }')
   post({ t: 'ready', code: workerData.code as string, actions: Object.keys(def.handlers) })
 }
 

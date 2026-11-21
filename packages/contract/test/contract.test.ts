@@ -53,7 +53,7 @@ test('声明位：合法 manifest 过得去，非法形态在注册期就失败'
 
 test('plugin manifest：sdk_version / isolation / entry 必填，默认 in-process', () => {
   const m = pluginManifestSchema.parse({
-    sdk_version: '^1',
+    sdk_version: '^2', version: '1.0.0',
     entry: './index.mjs',
     meta: { code: 'demo', display: 'd', category: 'c', actions: ['search'] },
   })

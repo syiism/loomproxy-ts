@@ -1,0 +1,13 @@
+{
+  "sdk_version": "^1",
+  "version": "1.0.0",
+  "entry": "./index.mjs",
+  "meta": {
+    "code": "bad_sdk",
+    "display": "SDK 不兼容",
+    "category": "fixture",
+    "actions": [
+      "search"
+    ]
+  }
+}

@@ -13,6 +13,6 @@
     "required_params": { "content": ["itemId"] },
     "search_tabs": [{ "tab_type": 3, "bd_id": "2", "name": "小说", "media_type": "novel" }],
     "media_type": "novel",
-    "settings": [{ "key": "fixture_mode", "type": "string", "default": "v1", "description": "夹具开关" }]
+    "settings": [{ "key": "fixture_mode", "type": "string", "default": "v2", "description": "夹具开关" }]
   }
 }

@@ -24,6 +24,6 @@
       "@loomproxy/api": ["packages/api/src/index.ts"]
     }
   },
-  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "plugins/*/*/src/**/*.ts", "plugins/*/*/test/**/*.ts",
+  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "plugins/*/src/**/*.ts", "plugins/*/test/**/*.ts",
               "apps/*/src/**/*.ts", "apps/*/test/**/*.ts", "tools/**/*.mjs"]
 }

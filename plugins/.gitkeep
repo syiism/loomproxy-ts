@@ -1,3 +1,3 @@
-# 插件目录（部署单元）：plugins/<code>/{deps/{contract,source-kit}, node_modules(真实 JS 依赖), <version>/}
-# 方案 B：源码即插件，无打包步骤；依赖由 pnpm run sync:plugins 维护，plugins/ 下不许有软链。
-# 本轮 git 规则不变（目录仍被忽略），是否纳管由后续单独决策。
+# 插件目录（部署单元）：plugins/<code>/{manifest.json(含 version), index.mjs, src/, test/, protocol?}
+# SDK 2：源码即插件、单版本；SDK helper 由宿主注入（src/sdk.ts 桥），无 deps/、无 node_modules/、无 <version>/。
+# 多版本由开发者/外部发布系统维护；手动导入只收 zip（POST /admin/sources/install-package）。

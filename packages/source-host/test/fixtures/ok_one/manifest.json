@@ -1,0 +1,48 @@
+{
+  "sdk_version": "^2",
+  "version": "1.1.0",
+  "isolation": "in-process",
+  "entry": "./index.mjs",
+  "params": {
+    "search": [
+      "key"
+    ],
+    "content": [
+      "bookId",
+      "itemId"
+    ]
+  },
+  "meta": {
+    "code": "ok_one",
+    "display": "夹具一号",
+    "category": "fixture",
+    "sort_order": 10,
+    "status": 1,
+    "actions": [
+      "search",
+      "content"
+    ],
+    "required_params": {
+      "content": [
+        "itemId"
+      ]
+    },
+    "search_tabs": [
+      {
+        "tab_type": 3,
+        "bd_id": "2",
+        "name": "小说",
+        "media_type": "novel"
+      }
+    ],
+    "media_type": "novel",
+    "settings": [
+      {
+        "key": "fixture_mode",
+        "type": "string",
+        "default": "v2",
+        "description": "夹具开关"
+      }
+    ]
+  }
+}

@@ -19,19 +19,19 @@ test('装配：没有插件目录也能起（/datasources 为空），有插件�
     await empty.app.close()
 
     // 放一个插件进去，重新装配即可用（等价于进程启动时那段扫描）
-    const v = join(root, 'plugins', 'p_one', '1.0.0')
+    const v = join(root, 'plugins', 'p_one')
     mkdirSync(v, { recursive: true })
     writeFileSync(
       join(v, 'manifest.json'),
       JSON.stringify({
-        sdk_version: '^1',
+        sdk_version: '^2', version: '1.0.0',
         entry: './index.mjs',
         meta: { code: 'p_one', display: 'P1', category: 'p', actions: ['search'] },
       }),
     )
     writeFileSync(
       join(v, 'index.mjs'),
-      `export default { handlers: { search: async () => ({ bookList: [{ bookId: '1', name: 'n', author: 'a', kind: 'k', wordCount: '', lastChapter: '', intro: '', coverUrl: '' }] }) } }`,
+      `export default (sdk) => ({ handlers: { search: async () => ({ bookList: [{ bookId: '1', name: 'n', author: 'a', kind: 'k', wordCount: '', lastChapter: '', intro: '', coverUrl: '' }] }) } })`,
     )
 
     const { app, settings, dataSources } = await compose({
@@ -97,19 +97,19 @@ test('登录 → 明细：一次数据面请求会被记进历史页（带 plugi
   const root = mkdtempSync(join(tmpdir(), 'loomproxy-login-'))
   try {
     const pluginDir = join(root, 'plugins')
-    const v = join(pluginDir, 'p_one', '1.0.0')
+    const v = join(pluginDir, 'p_one')
     mkdirSync(v, { recursive: true })
     writeFileSync(
       join(v, 'manifest.json'),
       JSON.stringify({
-        sdk_version: '^1',
+        sdk_version: '^2', version: '1.0.0',
         entry: './index.mjs',
         meta: { code: 'p_one', display: 'P1', category: 'p', actions: ['search'] },
       }),
     )
     writeFileSync(
       join(v, 'index.mjs'),
-      `export default { handlers: { search: async () => ({ bookList: [] }) } }`,
+      `export default (sdk) => ({ handlers: { search: async () => ({ bookList: [] }) } })`,
     )
 
     const { app } = await compose({
@@ -237,11 +237,11 @@ test('文档导航 vs API：面板页给 HTML，API 给 JSON；report.html 未�
     const webDir = join(root, 'dist')
     mkdirSync(webDir, { recursive: true })
     writeFileSync(join(webDir, 'index.html'), '<!doctype html><div id="app"></div>')
-    const v = join(root, 'plugins', 'p_one', '1.0.0')
+    const v = join(root, 'plugins', 'p_one')
     mkdirSync(v, { recursive: true })
-    writeFileSync(join(v, 'manifest.json'), JSON.stringify({ sdk_version: '^1', entry: './index.mjs',
+    writeFileSync(join(v, 'manifest.json'), JSON.stringify({ sdk_version: '^2', version: '1.0.0', entry: './index.mjs',
       meta: { code: 'p_one', display: 'P1', category: 'p', actions: ['search'] } }))
-    writeFileSync(join(v, 'index.mjs'), `export default { handlers: { search: async () => ({ bookList: [] }) } }`)
+    writeFileSync(join(v, 'index.mjs'), `export default (sdk) => ({ handlers: { search: async () => ({ bookList: [] }) } })`)
     const { app } = await compose({
       env: { PLUGIN_DIR: join(root, 'plugins'), DATA_DIR: join(root, 'data'), WEB_DIST: webDir, ADMIN_PASSWORD: 'pw' },
       logger: silentLogger(),
@@ -273,13 +273,13 @@ test('文档导航 vs API：面板页给 HTML，API 给 JSON；report.html 未�
 test('数据面鉴权闸：AUTH_ENABLED=true 必须带凭证（白名单除外）；false 是可选鉴权', async () => {
   const root = mkdtempSync(join(tmpdir(), 'loomproxy-auth-'))
   try {
-    const v = join(root, 'plugins', 'p_one', '1.0.0')
+    const v = join(root, 'plugins', 'p_one')
     mkdirSync(v, { recursive: true })
     writeFileSync(join(v, 'manifest.json'), JSON.stringify({
-      sdk_version: '^1', entry: './index.mjs', params: { search: ['key'] },
+      sdk_version: '^2', version: '1.0.0', entry: './index.mjs', params: { search: ['key'] },
       meta: { code: 'p_one', display: 'P1', category: 'p', actions: ['search'], status: 1 },
     }))
-    writeFileSync(join(v, 'index.mjs'), `export default { handlers: { search: async () => ({ bookList: [] }) } }`)
+    writeFileSync(join(v, 'index.mjs'), `export default (sdk) => ({ handlers: { search: async () => ({ bookList: [] }) } })`)
     const base = {
       PLUGIN_DIR: join(root, 'plugins'),
       DATA_DIR: join(root, 'data'),
@@ -332,24 +332,18 @@ test('运行期安装的新源：自动授权给内置套餐（匿名可用）+ 
   }
   try {
     const c = await compose({ env: base, logger: silentLogger() })
-    const login = await c.app.inject({ method: 'POST', url: '/auth/login', payload: { username: 'admin', password: 'pw' } })
-    const token = (login.json() as { data: { token: string } }).data.token
     const manifest = JSON.stringify({
-      sdk_version: '^1', entry: './index.mjs', params: { search: ['query'], content: ['bookId', 'itemId'] },
+      sdk_version: '^2', version: '1.0.0', entry: './index.mjs', params: { search: ['query'], content: ['bookId', 'itemId'] },
       meta: { code: 'fresh_src', display: '新源', category: 'demo', actions: ['search', 'content'] },
     })
-    const res = await c.app.inject({
-      method: 'POST', url: '/admin/sources/install',
-      headers: { authorization: `Bearer ${token}` },
-      payload: {
-        code: 'fresh_src', version: '1.0.0',
-        files: {
-          'manifest.json': manifest,
-          'index.mjs': `export default { handlers: { search: async () => ({ bookList: [] }), content: async () => ({ contentType: 'novel', data: { content: 'x' } }) } }`,
-        },
+    // 手动导入走 zip；这里直接用宿主安装接口（面板 zip 上传到它落盘是同一条路径）
+    await c.host.install({
+      code: 'fresh_src',
+      files: {
+        'manifest.json': manifest,
+        'index.mjs': `export default (sdk) => ({ handlers: { search: async () => ({ bookList: [] }), content: async () => ({ contentType: 'novel', data: { content: 'x' } }) } })`,
       },
     })
-    assert.equal(res.statusCode, 200)
 
     // 匿名（免费档）能直接调：授权行由 onPluginActive 补上，不用重启也不用等下次启动扫描
     const anon = await c.app.inject({ method: 'GET', url: '/fresh_src/search?query=x' })

@@ -69,7 +69,7 @@
   （声明在 source-kit，实现在 store）——这样"一个源 + 一份假设置"就能跑，不必起数据库。
 - `api` 不 import 任何具体源包：源通过 `defineSource()` 在模块加载期自注册，
   `api` 只读登记表。**加源不改 `api`**（对应 Go 版 `deploy_all.go` 那个空白导入清单，
-  TS 版变成 `plugins/<code>/<version>/` 一个目录，见 [`迁移-TS-4-源插件与热更新.md`](迁移-TS-4-源插件与热更新.md)）。
+  TS 版变成 `plugins/<code>/` 单版本目录（SDK 2），见 [`迁移-TS-4-源插件与热更新.md`](迁移-TS-4-源插件与热更新.md)）。
   **热更新之后 `api` 连“读登记表”也不直接做**，改成向 `source-host` 求当前代（每次请求现取，不闭包捕获）。
 - `server` 是唯一知道"顺序"的地方：`config → db → settings seed → OnBoot → pool.startAll → routes → listen`。
   把它写进文档而不是散落在各包 init，是 ② §10 那张时序表的 TS 落点。
@@ -96,10 +96,10 @@
 | L2 | `:memory:` sqlite 全量迁移 + seed 幂等 + settings 敏感键只写不回显 | `pnpm -F @loomproxy/store test` | 一个空库 |
 | L2′ | 语料回放：给定参数 + 假上游 → 产出与 Go 逐字节相同的 DTO | `pnpm -F @loomproxy/source-kit test` | 无 DB、无 HTTP（fetch 注入） |
 | L3 | 内存表 + 假设置下，六种 `AccessReason`、额度扣减、去重窗口、双维限流全部命中 | `pnpm -F @loomproxy/gate test` | 内存 store |
-| L3′ | `source-host`：假插件跑 load→swap→drain→rollback；坏 manifest / 坏 sdk_version / 导入抛错 三种失败各有用例 | `pnpm -F @loomproxy/source-host test` | fixture 插件 |
-| L4（源） | 单源 smoketest：`node tools/plugin-run.mjs <code> search query=…` 输出合法 DTO（**不起 host、不碰 DB**）；映射夹具跑 `node --test "plugins/*/*/test/*.test.ts"` | `pnpm run sync:plugins` + 上面两条命令，已无按源划分的 workspace 包 | 该源自己的 fixture |
+| L3′ | `source-host`：假插件跑 load→外部换目录→reload→drain；坏 manifest / 坏 sdk_version / 工厂抛错 三种失败各有用例 | `pnpm -F @loomproxy/source-host test` | fixture 插件 |
+| L4（源） | 单源 smoketest：`node tools/plugin-run.mjs <code> search query=…` 输出合法 DTO（**不起 host、不碰 DB**）；映射夹具跑 `node --test "plugins/*/test/*.test.ts"` | SDK 由宿主注入，已无按源划分的 workspace 包 | 该源自己的 fixture |
 | L4′ | Fastify `inject()` 跑全部 47 个前端调用点 + 数据面五动作，不快照网络 | `pnpm -F @loomproxy/api test` | 假 store/gate |
-| L5 | 真进程：`/datasources` 列全部携带源；双跑对拍 Go 全绿；**热更新 e2e**（reload×3 + rollback + 坏插件，全程不重启） | `pnpm -F @loomproxy/server e2e` | 现网语料 + 临时 sqlite + 两份插件版本目录 |
+| L5 | 真进程：`/datasources` 列全部携带源；双跑对拍 Go 全绿；**热更新 e2e**（reload×3 + rollback + 坏插件，全程不重启） | `pnpm -F @loomproxy/server e2e` | 现网语料 + 临时 sqlite + 外部换目录（服务内单版本） |
 
 **"每层可单独跑通"的硬含义**：任何一层的 `test` 都不许连真实上游、不许连真实 MySQL/Redis、
 不许依赖上一层先跑过。`api` 的测试用 `inject()`；`sources` 的测试用 fixture；
@@ -122,7 +122,7 @@
 | `middleware/` | L1 的 `transport` 四条（requestid/recovery/logging/cors/cachecontrol）+ L3/L4′（apiauth/ipblock/baseurl/reqparams 属 api，access/billing/ratelimit 属 gate） | 链顺序常量放 L4′ `api/src/chain/order.ts` |
 | `handlers/admin|apikey|auth|catalog|quota|rank|subjectrank|userconfig|verify/` | L4′ `api/src/routes/*/` | 面板契约 ① §6 |
 | `app/` | L5 `apps/server/src/` + L4′ `api/src/app.ts` | `aggregate_search.go` → L4′（它要 gate + 各源）；`monitor.go` → L3（写明细）+ L4′（路由） |
-| `sources/`（deploy 仓） | 源包 → `plugins/<code>/{<version>/, deps/, node_modules/}`（方案 B：源码即插件） | 一码一插件、无打包步骤；版本目录是换代/回滚单位，`deps/`（SDK 源码）与 `node_modules/`（真实 JS 文件）按 code 共享、无软链 |
+| `sources/`（deploy 仓） | 源包 → `plugins/<code>/{manifest.json,index.mjs,src/,test/,protocol?}`（SDK 2） | 一码一插件、单版本、无打包/依赖同步；SDK helper 由宿主注入，多版本由开发者外部维护 |
 | `web/` | 原地 | 只改构建产物被 server 读取的方式 |
 | `tools/`、`scripts/` | `tools/`（TS 版门禁脚本） | 见 §7 |
 
@@ -160,7 +160,7 @@ const LAYERS = {
   "apps/server":              ["packages/", "apps/server"],
 }
 // 另加三条：① packages/* 不许 import apps/*（下层认识上层）
-//           ② plugins/<code>/<version>/ 里 SDK 走相对 deps/ 路径，不许裸 @loomproxy/*
+//           ② plugins/<code>/src 里只许 `import type @loomproxy/*`，运行时 helper 走宿主注入的 sdk
 //           ③ plugins/<code>/ 下不许软链；不许 import store/gate/api/server（插件只认 SDK）
 // 这份草案以 tools/check-layers.mjs 为准（它才是实际执行的分层判据）。
 ```
@@ -197,6 +197,6 @@ const LAYERS = {
 > 另开一个空项目 import 它们，能跑通（说明它们真的不认识业务）；
 > 把 `plugins/<code>/` 整棵拷到空目录（无仓库、无 workspace），用 `tools/plugin-run.mjs` 跑出一个动作、
 > 用版本目录里的夹具单测跑绿（说明源真的不依赖平台）；
-> 把 `packages/source-host` 单独 `pnpm pack` 出去，喂一个 fixture 插件能 load/swap/rollback
+> 把 `packages/source-host` 单独 `pnpm pack` 出去，喂一个 fixture 插件能 load/外部换目录 reload/drain
 > （说明宿主真的不依赖具体源）。
 > 这三条过不了，分层就只是目录长得像。

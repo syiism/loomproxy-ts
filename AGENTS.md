@@ -13,11 +13,10 @@
    `omitempty` → `undefined`（不是 `null`）、字段名逐字照抄。改任何一条都算破坏前端（① §1）。
 4. **Node strip-only 语法**：不用 `enum` / `namespace` / 构造器参数属性 / 装饰器。
    类型导入一律 `import type`（`verbatimModuleSyntax`）。
-5. **源码即插件**：14 个源包直接住在 `plugins/<code>/<version>/`（无打包步骤、无 `packages/sources/`），
-   一码一 `deps/`（SDK 源码 + 第三方 JS 依赖，多版本共享）。新源照这个结构（`manifest.json` 是唯一声明位、
-   映射逻辑进 `src/normalize.ts` 且可单测、宿主用 `packages/source-host/test/fixtures/*` 夹具验证）。
-   **不许在 plugins/ 下建软链**（拷走就断）；SDK 必须走相对 deps 路径，第三方纯 JS 包以真实文件放
-   `<code>/node_modules/`；依赖变更跑 `pnpm run sync:plugins`。
+5. **源码即插件（SDK 2）**：14 个源包直接住在 `plugins/<code>/`（单版本；`version` 写在 manifest 里，
+   多版本由开发者/外部发布系统维护）。插件只做 `import type`；运行时 SDK helper 由宿主在工厂
+   `export default (sdk) => ({handlers})` 调用时注入（经 `src/sdk.ts` 桥）。插件目录里不许有
+   `<version>/`、`deps/`、`node_modules/` 或软链；第三方依赖只留该源独有且宿主不提供的纯 JS 包。
    **完整编写范式见 `docs/方案/源插件编写范式.md`**（目录结构/manifest 字段表/三种转写形态/测试与上线清单）。
    **协议层复用外部参考实现**（`/home/muyang/work/novels/fanq`，见 README「外部依赖」）时，
    不要顺手把签名/加密/会话池抄进本仓——那是最容易与上游漂移的一块。
@@ -40,16 +39,16 @@ pnpm run check     # 分层 + tsc + 面板构建 + 全部用例
 | `store` | 幂等登记（不覆盖管理员改过的值）、敏感键只写不回显 |
 | `source-kit` | 注册表换代原子性 + "在飞请求拿的是它进门前那一代" |
 | `gate` | 六档访问判定顺序、双维限流、去重窗口 |
-| `source-host` | 扫描/reload/rollback/drain/卸载 + 四种坏插件各留记录且不拖垮别人 |
+| `source-host` | 扫描/reload/drain/卸载 + 四种坏插件各留记录且不拖垮别人（单版本，多版本外部管理） |
 | `api` | 信封形状、参数注入规则、必填参数 400、未知源 404、插件管理要管理员 |
-| `plugins/<code>/<version>` | 映射纯函数用例（不连网）+ `node tools/plugin-run.mjs <code> <action>` 实网跑通一个动作 |
+| `plugins/<code>` | 映射纯函数用例（不连网）+ `node tools/plugin-run.mjs <code> <action>` 实网跑通一个动作 |
 | `apps/server` | `compose()` 起得来：无插件目录也能起，有插件立即可派发 |
 
 ## 4. 插件（源包）的三步跑通
 
 ```bash
 node tools/plugin-run.mjs fq_novel search query=三体     # ① 单插件直跑（真上游）
-node tools/sync-plugin-deps.mjs fq_novel                 # ② 修依赖/重建 deps 与 node_modules（无打包产物）
+# ② 插件已自包含：无需打包/同步依赖，改造直接改 plugins/<code>/src
 PLUGIN_DIR=plugins node apps/server/src/main.ts          # ③ 起服务 → curl /datasources、/fq_novel/search
 ```
 

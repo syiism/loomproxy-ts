@@ -1,6 +1,18 @@
 // 源作者的唯一入口形状：handler 收 ctx、吐 DTO。
 // ctx 里的东西全部由 host 注入——源不 import store/api，也不自己 new HTTP 客户端。
-import type { ActionName, Device, Params, PoolConfig, PoolProvider } from '@loomproxy/contract'
+import {
+  inBandError,
+  keywordOf,
+  paramString,
+  scrubQuery,
+  textContent,
+  type ActionName,
+  type Device,
+  type Params,
+  type PoolConfig,
+  type PoolProvider,
+} from '@loomproxy/contract'
+import { load } from 'cheerio'
 
 /** 只读设置视图：声明在这里，实现在 store（source-kit 不依赖 store） */
 export interface SettingsReader {
@@ -79,4 +91,28 @@ export function defineSource(def: SourceDefinition): SourceDefinition {
     if (typeof def.handlers[n] !== 'function') throw new Error(`defineSource: ${n} 不是函数`)
   }
   return def
+}
+
+/**
+ * SDK 2：宿主注入给插件的**唯一运行时依赖**。
+ * 插件源码只做 `import type`，不 import 任何 SDK 值（contract/source-kit 由宿主持有单例）。
+ * 与 Pi 扩展的 `pi` / MusicFree 宿主 require 注入同构：插件包因此不再携带 SDK、zod 或版本目录。
+ */
+export type PluginSdk = {
+  inBandError: typeof inBandError
+  keywordOf: typeof keywordOf
+  paramString: typeof paramString
+  scrubQuery: typeof scrubQuery
+  textContent: typeof textContent
+  defineSource: typeof defineSource
+  /** HTML 解析（宿主提供，插件不用自带 cheerio 闭包） */
+  load: typeof load
+}
+
+/** 插件入口形态：默认导出工厂，宿主调用时注入 SDK（类似 Pi 的 factory / MusicFree 的 module.exports） */
+export type PluginFactory = (sdk: PluginSdk) => SourceDefinition
+
+/** 宿主侧构造 SDK（in-process 与 worker 入口各调一次，拿到的都是宿主那份函数） */
+export function createPluginSdk(): PluginSdk {
+  return { inBandError, keywordOf, paramString, scrubQuery, textContent, defineSource, load }
 }

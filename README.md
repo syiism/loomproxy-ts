@@ -29,14 +29,14 @@ packages/source-kit L2′ 源作者 SDK + 插件 manifest schema + 注册表 + �
 packages/gate       L3  访问判定 / 计费 / 限流
 packages/source-host L3 插件宿主：扫描 / manifest 校验 / 换代 / drain / 回滚
 packages/api        L4′ Fastify 装配：控制面路由 + /:source/:action 派发
-plugins/<code>/<version>/ L4 源码即插件：manifest + src + test + deps（SDK 源码 + 真实 JS 依赖）
+plugins/<code>/       L4 源码即插件：manifest（含 version）+ src + test，SDK 由宿主注入
 apps/server         L5  进程入口（compose → listen → 停机），装配顺序的唯一出处
 web                 —  **原 Go 项目面板原样搬入**（Vue3 + Vite，7814 行），只补了「源插件」一页与
                       api 方法、monitor 的 plugin_version 筛选；产物 web/dist 由 server 托管
 ```
 
-**已落地的源包**：14 个，源码直接住 `plugins/<code>/<version>/`；起服务时 host 扫这个目录，
-没有打包步骤，拷走一个 `<code>/` 目录就能在别的机器加载（`deps/` 与 `node_modules/` 都是真实文件，不是软链）。
+**已落地的源包**：14 个，源码直接住 `plugins/<code>/`（单版本，manifest 里带 `version`）；
+host 扫这个目录，没有打包/依赖同步步骤；运行时 SDK 由宿主注入，插件包里没有 SDK/zod 副本。
 
 依赖矩阵与禁反向依赖的规则在 `tools/check-layers.mjs`（`pnpm check:layers`）。
 
@@ -56,8 +56,7 @@ node tools/plugin-run.mjs fq_novel search query=三体
 node tools/plugin-run.mjs fq_novel chapter bookId=6983938353934634020
 node tools/plugin-run.mjs fq_novel content bookId=6983938353934634020 itemId=7476392329142602777
 
-# 重建单插件依赖（SDK 源码副本 + 第三方 JS 依赖闭包；不生成打包产物）
-pnpm run sync:plugins              # 全部插件；也可 node tools/sync-plugin-deps.mjs <code>
+# 插件自包含：无需打包/同步依赖；改动直接落在 plugins/<code>/src
 
 # 面板
 pnpm run check:web     # 构建面板（等价 pnpm -F @loomproxy/web build）
@@ -74,13 +73,13 @@ Node 24 直接跑 `.ts`（type stripping），所以**用例不需要构建**；
 | 声明位 zod 校验、五动作 DTO、媒介/媒介码归一、omitempty→undefined | ✅ `packages/contract` |
 | 配置（键与默认值对齐 Go 版）、`.env` 优先级、日志脱敏、LRU+TTL、singleflight、熔断、取数门面 | ✅ `packages/kernel` |
 | 注册表换代原子性、"每次请求现取"、观测抽取、search 打标（照 `PrependSourceToKind`） | ✅ `packages/source-kit` |
-| 插件扫描 / manifest+SDK 校验 / 加载失败不拖垮别人 / reload / rollback / drain / 卸载 | ✅ `packages/source-host` |
+| 插件扫描 / manifest+SDK 校验 / 加载失败不拖垮别人 / reload / drain / 卸载（单版本，多版本外部管理） | ✅ `packages/source-host` |
 | 访问判定六档（顺序与 Go 一致）、双维限流、计费去重窗口 | ✅ `packages/gate` |
 | `/`、`/datasources`、`/data*`、`/endpoints`、`/announcement`、`/admin/sources/*`、`/:source/:action` | ✅ `packages/api` |
 | 插件目录 `fs.watch` → 只 reload 变动源（**不重启进程**） | ✅ `apps/server` |
 | 面板：原 Go 面板全量搬入 + 「源插件」新页；登录/用户/角色/设置/数据源/监控/明细 已接真库 | ✅ `web` |
 | 调用明细 `plugin_version` 列（④ §7 批准的那一格） | ✅ 出口 hook 记账 + `/admin/monitor/history` |
-| 源包实现 | ✅ 14 个源插件（源码即插件，随 `plugins/<code>/<version>/` 部署），四动作实网派发 |
+| 源包实现 | ✅ 14 个源插件（SDK 2：源码即插件，随 `plugins/<code>/` 单版本部署），四动作实网派发 |
 | **号池运行时** | ✅ `packages/pool`（墙钟/摊薄两形态、冷热/耗尽/死号/冷却、维护协程、快照脱敏）；fq_novel 的会话池已接入（spread 型，建号走 device_register，取号写 pinned 会话） |
 | **数据库读写** | ✅ SQLite（`node:sqlite` 内置，无 native/cgo）：users/roles/user_roles/sessions/api_keys/system_settings/data_sources/plans/api_call_logs/api_call_stats/quota_limits/user_quota_overrides/quota_usage_logs/quota_costs，DDL 在 `packages/store/src/sqlite.ts` |
 | **内置系统设置（29 条）** | ✅ 键/初值/类型/说明对齐 Go `db/seed.go`；**且真的生效**：`announcement`（/announcement 横幅）、`register_enabled`（注册开关）、`default_role`/`default_quota_plan`（新用户）、`email_domain_allowlist/blocklist`（后缀匹配，白名单优先）、`maintenance_mode`（数据面 503，管理员放行）、`verify_code_scenes`（/verify/config 下发场景）、`jwt_expire_hours`（登录有效期，-1 永不过期） |
@@ -92,7 +91,7 @@ Node 24 直接跑 `.ts`（type stripping），所以**用例不需要构建**；
 
 ## 外部依赖（fq_novel 试点）
 
-`plugins/fq_novel/<version>/` **不自己实现签名/加密/会话池**，协议树（维护机上的 ESM 参考实现副本）
+`plugins/fq_novel/` **不自己实现签名/加密/会话池**，协议树（维护机上的 ESM 参考实现副本）
 随插件放在 `protocol/`，由 `src/protocol.ts` 相对它动态 import：
 
 | 环境变量 | 默认 | 说明 |
@@ -101,7 +100,7 @@ Node 24 直接跑 `.ts`（type stripping），所以**用例不需要构建**；
 | `FQ_SESSION_POOL` | `DATA_DIR/_runtime/fq_novel/fq-sessions.json` | 设备会话池。首次运行从协议树拷一份种子（5 台已注册设备）；**刻意不放 `DATA_DIR/fq_novel/`**，否则 `/data` 会把它当成静态字典列出来 |
 | `FQ_POOL_MAX` | `5` | 协议层自己的会话池上限 |
 
-`plugins/sq_novel/<version>`（书旗小说）是**转写**而不是复用：它的协议（App 加密口的签名/keystream/正文解码）
+`plugins/sq_novel/`（书旗小说）是**转写**而不是复用：它的协议（App 加密口的签名/keystream/正文解码）
 在 `src/protocol.ts` 里自带实现，来源是 Legado 书源「书旗-轻页(阅读)」的 jsLib
 （`/home/muyang/work/legado-suite/legado-work/work/书旗-轻页/src/jslib.js`）。
 转写口径：**算法与常量逐字节对齐**（`test/protocol.test.ts` 用参考实现跑出的黄金值钉住），

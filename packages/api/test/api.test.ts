@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { deflateRawSync } from 'node:zlib'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -33,12 +33,12 @@ const SECRET = 'test-secret-0123456789abcdef0123456789'
 
 function makePluginDir(): string {
   const root = mkdtempSync(join(tmpdir(), 'loomproxy-api-'))
-  const v = join(root, 'plugins', 'demo_one', '1.0.0')
+  const v = join(root, 'plugins', 'demo_one')
   mkdirSync(v, { recursive: true })
   writeFileSync(
     join(v, 'manifest.json'),
     JSON.stringify({
-      sdk_version: '^1',
+      sdk_version: '^2', version: '1.0.0',
       entry: './index.mjs',
       params: { search: ['key'], detail: ['bookId'], chapter: ['bookId'], content: ['bookId', 'itemId'] },
       meta: {
@@ -61,7 +61,7 @@ function makePluginDir(): string {
   )
   writeFileSync(
     join(v, 'index.mjs'),
-    `export default { handlers: {
+    `export default (sdk) => ({ handlers: {
        search: async (ctx) => ({ bookList: [{ bookId: 'b1', name: 'n-' + (ctx.params.key ?? ''), author: 'a',
          kind: 'stale,小说', wordCount: '', lastChapter: '', intro: '', coverUrl: '' }] }),
        detail: async (ctx) => ({ bookId: ctx.params.bookId ?? 'b1', name: '真实书名', author: 'a',
@@ -70,7 +70,7 @@ function makePluginDir(): string {
        chapter: async (ctx) => ({ chapterList: [{ title: '第一章', itemId: 'c1' }, { title: '第二章', itemId: 'c2' }],
          secret: ctx.settings.get('demo_secret'), mode: ctx.settings.get('demo_mode') }),
        content: async () => ({ contentType: 'novel', data: { content: '正文' } }),
-     } }`,
+     } })`,
   )
   return root
 }
@@ -312,62 +312,48 @@ test('未知源 404；未登录访问受保护的控制面 401', async () => {
   }
 })
 
-test('插件管理：要管理员；reload 生效且 /datasources 跟着变；rollback 可回退', async () => {
+test('插件管理：要管理员；外部换目录 + reload 后 /datasources 跟着变', async () => {
   const { app, root, host } = await makeApp()
   try {
-    const forbidden = await app.inject({ method: 'GET', url: '/admin/sources/plugins', headers: { authorization: `Bearer ${userToken()}` } })
-    assert.equal(forbidden.statusCode, 403)
+    // 先存一份 v2，再把当前目录换成 v1（多版本由外部管理，服务只认当前这一份）
+    const v2 = join(root, 'plugins', 'demo_one_v2')
+    cpSync(join(root, 'plugins', 'demo_one'), v2, { recursive: true })
+    const v1 = join(root, 'plugins', 'demo_one_v1')
+    mkdirSync(v1, { recursive: true })
+    cpSync(join(root, 'plugins', 'demo_one'), v1, { recursive: true })
+    writeFileSync(join(v1, 'manifest.json'), JSON.stringify({
+      sdk_version: '^2', version: '1.0.0', entry: './index.mjs',
+      params: { search: ['key'], detail: ['bookId'], chapter: ['bookId'], content: ['bookId', 'itemId'] },
+      meta: {
+        code: 'demo_one', display: '演示一号 v1', category: 'demo', sort_order: 1, status: 1,
+        actions: ['search', 'detail', 'chapter', 'content'], required_params: { content: ['itemId'] }, media_type: 'novel',
+        search_tabs: [{ tab_type: 3, bd_id: '2', name: '小说', media_type: 'novel' }],
+      },
+    }))
 
+    const denied = await app.inject({
+      method: 'POST', url: '/admin/sources/demo_one/reload', headers: { authorization: `Bearer ${userToken()}` },
+    })
+    assert.equal(denied.statusCode, 403)
     const okRes = await app.inject({
-      method: 'GET',
-      url: '/admin/sources/plugins',
-      headers: { authorization: `Bearer ${adminToken()}` },
+      method: 'POST', url: '/admin/sources/demo_one/reload', headers: { authorization: `Bearer ${adminToken()}` },
     })
     assert.equal(okRes.statusCode, 200)
-    const list = (okRes.json() as { data: Array<{ code: string; state: string; version: string }> }).data
-    assert.equal(list[0]?.code, 'demo_one')
-    assert.equal(list[0]?.state, 'active')
+    const info = (okRes.json() as { data: { code: string; state: string; version: string } }).data
+    assert.equal(info.code, 'demo_one')
+    assert.equal(info.state, 'active')
 
-    // 加一个高版本，reload 后 /datasources 立即反映（不用重启）
-    const v = join(root, 'plugins', 'demo_one', '1.1.0')
-    mkdirSync(v, { recursive: true })
-    writeFileSync(
-      join(v, 'manifest.json'),
-      JSON.stringify({
-        sdk_version: '^1',
-        entry: './index.mjs',
-        meta: {
-          code: 'demo_one',
-          display: '演示一号 v2',
-          category: 'demo',
-          sort_order: 1,
-          status: 1,
-          actions: ['search'],
-        },
-      }),
-    )
-    writeFileSync(join(v, 'index.mjs'), `export default { handlers: { search: async () => ({ bookList: [] }) } }`)
-
+    rmSync(join(root, 'plugins', 'demo_one'), { recursive: true, force: true })
+    cpSync(v1, join(root, 'plugins', 'demo_one'), { recursive: true })
     const reload = await app.inject({
-      method: 'POST',
-      url: '/admin/sources/demo_one/reload',
+      method: 'POST', url: '/admin/sources/demo_one/reload',
       headers: { authorization: `Bearer ${adminToken()}` },
     })
     assert.equal(reload.statusCode, 200)
-    assert.equal((reload.json() as { data: { version: string } }).data.version, '1.1.0')
-
+    assert.equal((reload.json() as { data: { version: string } }).data.version, '1.0.0')
     const ds = await app.inject({ method: 'GET', url: '/datasources' })
     const item = (ds.json() as { data: Array<{ name: string }> }).data[0]
-    assert.equal(item?.name, '演示一号 v2', '清单必须跟着换代')
-
-    // rollback 回 1.0.0
-    const rb = await app.inject({
-      method: 'POST',
-      url: '/admin/sources/demo_one/rollback',
-      headers: { authorization: `Bearer ${adminToken()}` },
-    })
-    assert.equal(rb.statusCode, 200)
-    assert.equal((rb.json() as { data: { version: string } }).data.version, '1.0.0')
+    assert.equal(item?.name, '演示一号 v1', '清单必须跟着换代')
     assert.equal(host.registryRef.get('demo_one')?.version, '1.0.0')
   } finally {
     await app.close()
@@ -713,83 +699,6 @@ test('源设置自注册：声明位落库（幂等不覆盖）、面板带 sour
   }
 })
 
-test('添加插件：安装 → 写盘 → 立即生效（数据面可调）；同版本重复/非法码/缺入口都 400', async () => {
-  const { app, root, host } = await makeApp()
-  try {
-    const H = { authorization: `Bearer ${adminToken()}` }
-    const manifest = JSON.stringify({
-      sdk_version: '^1',
-      entry: './index.mjs',
-      params: { search: ['key'] },
-      meta: { code: 'demo_new', display: '新装的源', category: 'demo', actions: ['search'], media_type: 'novel' },
-    })
-    const entry = `export default { handlers: { search: async () => ({ bookList: [] }) } }`
-
-    // 普通用户不许装（安装插件 = 允许执行任意代码）
-    const denied = await app.inject({
-      method: 'POST', url: '/admin/sources/install',
-      headers: { authorization: `Bearer ${userToken()}` },
-      payload: { code: 'demo_new', version: '0.1.0', files: { 'manifest.json': manifest, 'index.mjs': entry } },
-    })
-    assert.equal(denied.statusCode, 403)
-
-    const res = await app.inject({
-      method: 'POST', url: '/admin/sources/install', headers: H,
-      payload: { code: 'demo_new', version: '0.1.0', files: { 'manifest.json': manifest, 'index.mjs': entry } },
-    })
-    assert.equal(res.statusCode, 200)
-    const info = (res.json() as { data: { code: string; version: string; state: string } }).data
-    assert.equal(info.code, 'demo_new')
-    assert.equal(info.version, '0.1.0')
-    assert.equal(info.state, 'active')
-
-    // 立即生效：目录已出现在 /datasources，数据面可直接调
-    // （匿名仍要过免费套餐授权——"装上了"与"谁能用"是两件事，这里用管理员身份验证可达）
-    const catalog = await app.inject({ method: 'GET', url: '/datasources' })
-    assert.ok((catalog.json() as { data: Array<{ id: string }> }).data.some((d) => d.id === 'demo_new'))
-    assert.equal(
-      (await app.inject({ method: 'GET', url: '/demo_new/search?key=x', headers: H })).statusCode,
-      200,
-    )
-
-    // 同版本重复：拒绝覆盖（正在跑的产物不许被悄悄换掉）
-    const dup = await app.inject({
-      method: 'POST', url: '/admin/sources/install', headers: H,
-      payload: { code: 'demo_new', version: '0.1.0', files: { 'manifest.json': manifest, 'index.mjs': entry } },
-    })
-    assert.equal(dup.statusCode, 400)
-    assert.match((dup.json() as { msg: string }).msg, /已存在/)
-
-    // 非法源码 / 非法版本 / 缺入口：都在写盘前就被挡下
-    for (const bad of [
-      { code: '../evil', version: '1.0.0', files: { 'manifest.json': manifest, 'index.mjs': entry } },
-      { code: 'demo_x', version: '../../etc', files: { 'manifest.json': manifest, 'index.mjs': entry } },
-      { code: 'demo_x', version: '1.0.0', files: { 'manifest.json': manifest } },
-    ]) {
-      const r = await app.inject({ method: 'POST', url: '/admin/sources/install', headers: H, payload: bad })
-      assert.equal(r.statusCode, 400, JSON.stringify(bad.code))
-    }
-
-    // 入口抛错：没有老代 ⇒ 刚写入的目录被清掉，注册表里也没有它（不留带病的版本）
-    const broken = await app.inject({
-      method: 'POST', url: '/admin/sources/install', headers: H,
-      payload: {
-        code: 'demo_broken', version: '1.0.0',
-        files: {
-          'manifest.json': JSON.stringify({ sdk_version: '^1', entry: './index.mjs', params: { search: ['key'] }, meta: { code: 'demo_broken', display: 'B', category: 'demo', actions: ['search'] } }),
-          'index.mjs': `throw new Error('装不上')`,
-        },
-      },
-    })
-    assert.equal(broken.statusCode, 400)
-    assert.equal(host.info().find((i) => i.code === 'demo_broken' && i.state === 'active'), undefined)
-    assert.equal((await app.inject({ method: 'GET', url: '/demo_broken/search?key=x' })).statusCode, 404)
-  } finally {
-    await app.close()
-    rmSync(root, { recursive: true, force: true })
-  }
-})
-
 // 用例里造 zip（生产路径只读不写，所以写 zip 的代码只出现在测试里）
 function makeZip(entries: Array<{ name: string; content: string; deflate?: boolean }>): Uint8Array {
   const locals: Buffer[] = []
@@ -802,15 +711,14 @@ function makeZip(entries: Array<{ name: string; content: string; deflate?: boole
     const nameBuf = Buffer.from(e.name, 'utf8')
     const local = Buffer.alloc(30)
     local.writeUInt32LE(0x04034b50, 0)
-    local.writeUInt16LE(20, 4) // version needed
-    local.writeUInt16LE(0x800, 6) // utf8 名
+    local.writeUInt16LE(20, 4)
+    local.writeUInt16LE(0x800, 6)
     local.writeUInt16LE(e.deflate ? 8 : 0, 8)
     local.writeUInt32LE(crc, 14)
     local.writeUInt32LE(body.length, 18)
     local.writeUInt32LE(raw.length, 22)
     local.writeUInt16LE(nameBuf.length, 26)
     locals.push(local, nameBuf, body)
-
     const central = Buffer.alloc(46)
     central.writeUInt32LE(0x02014b50, 0)
     central.writeUInt16LE(20, 4)
@@ -835,7 +743,6 @@ function makeZip(entries: Array<{ name: string; content: string; deflate?: boole
   eocd.writeUInt32LE(cdOffset, 16)
   return new Uint8Array(Buffer.concat([...locals, ...centrals, eocd]))
 }
-
 let crcTable: number[] | null = null
 function crc32(buf: Buffer): number {
   if (!crcTable) {
@@ -851,26 +758,24 @@ function crc32(buf: Buffer): number {
   return (crc ^ 0xffffffff) >>> 0
 }
 
+
 test('上传插件包（zip）：包根或 <源码>/<版本>/ 前缀都能装；路径穿越/多根/缺 manifest 都 400', async () => {
   const { app, root, host } = await makeApp()
   try {
     const H = { authorization: `Bearer ${adminToken()}` }
-    const manifest = (code: string) =>
+    const manifest = (code: string, version = '1.0.0') =>
       JSON.stringify({
-        sdk_version: '^1',
+        sdk_version: '^2', version,
         entry: './index.mjs',
         params: { search: ['key'] },
         meta: { code, display: '打包来的源', category: 'demo', actions: ['search'], sort_order: 50 },
       })
-    const entry = `export default { handlers: { search: async () => ({ bookList: [] }) } }`
-    const asBody = (zip: Uint8Array, version?: string) => ({
-      package: Buffer.from(zip).toString('base64'),
-      ...(version ? { version } : {}),
-    })
+    const entry = `export default (sdk) => ({ handlers: { search: async () => ({ bookList: [] }) } })`
+    const asBody = (zip: Uint8Array) => ({ package: Buffer.from(zip).toString('base64') })
 
     // ① 带 <源码>/<版本>/ 前缀 + deflate 压缩（zip -r 打包目录的常见形状）
     const zipped = makeZip([
-      { name: 'zip_one/0.2.0/manifest.json', content: manifest('zip_one'), deflate: true },
+      { name: 'zip_one/0.2.0/manifest.json', content: manifest('zip_one', '0.2.0'), deflate: true },
       { name: 'zip_one/0.2.0/index.mjs', content: entry, deflate: true },
       { name: 'zip_one/0.2.0/data/cats.json', content: '{"a":1}' },
     ])
@@ -878,23 +783,27 @@ test('上传插件包（zip）：包根或 <源码>/<版本>/ 前缀都能装；
     assert.equal(res.statusCode, 200)
     const info = (res.json() as { data: { code: string; version: string; state: string } }).data
     assert.equal(info.code, 'zip_one')
-    assert.equal(info.version, '0.2.0', '版本号从包内目录名自动取')
+    assert.equal(info.version, '0.2.0', '版本号从 manifest 读')
     assert.equal(info.state, 'active')
     // 多文件也要落盘（data/cats.json 是源的数据字典）
-    assert.ok(existsSync(join(root, 'plugins', 'zip_one', '0.2.0', 'data', 'cats.json')))
+    assert.ok(existsSync(join(root, 'plugins', 'zip_one', 'data', 'cats.json')))
 
-    // ② 扁平包（manifest 在根）：版本由请求给
+    // ② 扁平包（manifest 在根）：版本从 manifest 读
     const flat = makeZip([
       { name: 'manifest.json', content: manifest('zip_flat') },
       { name: 'index.mjs', content: entry },
     ])
-    const flatRes = await app.inject({ method: 'POST', url: '/admin/sources/install-package', headers: H, payload: asBody(flat, '1.0.0') })
+    const flatRes = await app.inject({ method: 'POST', url: '/admin/sources/install-package', headers: H, payload: asBody(flat) })
     assert.equal(flatRes.statusCode, 200)
     assert.equal((flatRes.json() as { data: { version: string } }).data.version, '1.0.0')
-    // 版本既没给、包里也没有 → 明说，不猜一个
-    const noVersion = await app.inject({ method: 'POST', url: '/admin/sources/install-package', headers: H, payload: asBody(flat) })
-    assert.equal(noVersion.statusCode, 400)
-    assert.match((noVersion.json() as { msg: string }).msg, /版本/)
+    // manifest 缺 version → 拒绝，不猜一个
+    const noVersion = makeZip([
+      { name: 'manifest.json', content: JSON.stringify({ sdk_version: '^2', entry: './index.mjs', meta: { code: 'zip_nov', display: 'N', category: 'demo', actions: ['search'] } }) },
+      { name: 'index.mjs', content: entry },
+    ])
+    const noVersionRes = await app.inject({ method: 'POST', url: '/admin/sources/install-package', headers: H, payload: asBody(noVersion) })
+    assert.equal(noVersionRes.statusCode, 400)
+    assert.match((noVersionRes.json() as { msg: string }).msg, /version|版本/)
 
     // ③ 路径穿越（zip-slip）：包里的文件名带 .. → 拒绝，且没往上级目录写东西
     const slip = makeZip([
@@ -902,7 +811,7 @@ test('上传插件包（zip）：包根或 <源码>/<版本>/ 前缀都能装；
       { name: 'index.mjs', content: entry },
       { name: '../escaped.txt', content: 'boom' },
     ])
-    const slipRes = await app.inject({ method: 'POST', url: '/admin/sources/install-package', headers: H, payload: asBody(slip, '1.0.0') })
+    const slipRes = await app.inject({ method: 'POST', url: '/admin/sources/install-package', headers: H, payload: asBody(slip) })
     assert.equal(slipRes.statusCode, 400)
     assert.match((slipRes.json() as { msg: string }).msg, /路径/)
     assert.equal(existsSync(join(root, 'plugins', 'escaped.txt')), false)
@@ -918,7 +827,7 @@ test('上传插件包（zip）：包根或 <源码>/<版本>/ 前缀都能装；
     const twoRes = await app.inject({ method: 'POST', url: '/admin/sources/install-package', headers: H, payload: asBody(two) })
     assert.equal(twoRes.statusCode, 400)
     const empty = makeZip([{ name: 'index.mjs', content: entry }])
-    const emptyRes = await app.inject({ method: 'POST', url: '/admin/sources/install-package', headers: H, payload: asBody(empty, '1.0.0') })
+    const emptyRes = await app.inject({ method: 'POST', url: '/admin/sources/install-package', headers: H, payload: asBody(empty) })
     assert.equal(emptyRes.statusCode, 400)
     assert.match((emptyRes.json() as { msg: string }).msg, /manifest/)
 
@@ -939,21 +848,17 @@ test('上传插件包（zip）：包根或 <源码>/<版本>/ 前缀都能装；
 })
 
 test('计费：新装的源立刻有成本行并计入今日消耗；匿名调用不归属账号（不进流水）', async () => {
-  const { app, root, quota } = await makeApp()
+  const { app, root, quota, host } = await makeApp()
   try {
     const H = { authorization: `Bearer ${adminToken()}` }
     // 装一个插件：生效即登记每个动作的成本行（缺行 = 该接口不计费，流水永远空）
-    const res = await app.inject({
-      method: 'POST', url: '/admin/sources/install', headers: H,
-      payload: {
-        code: 'cost_src', version: '1.0.0',
-        files: {
-          'manifest.json': JSON.stringify({ sdk_version: '^1', entry: './index.mjs', params: { search: ['key'], content: ['bookId', 'itemId'] }, meta: { code: 'cost_src', display: 'C', category: 'demo', actions: ['search', 'content'] } }),
-          'index.mjs': `export default { handlers: { search: async () => ({ bookList: [] }), content: async () => ({ contentType: 'novel', data: { content: '正文' } }) } }`,
-        },
+    await host.install({
+      code: 'cost_src',
+      files: {
+        'manifest.json': JSON.stringify({ sdk_version: '^2', version: '1.0.0', entry: './index.mjs', params: { search: ['key'], content: ['bookId', 'itemId'] }, meta: { code: 'cost_src', display: 'C', category: 'demo', actions: ['search', 'content'] } }),
+        'index.mjs': `export default (sdk) => ({ handlers: { search: async () => ({ bookList: [] }), content: async () => ({ contentType: 'novel', data: { content: '正文' } }) } })`,
       },
     })
-    assert.equal(res.statusCode, 200)
     // 默认成本档：**只有正文 1 单位**，检索/详情/目录是 0（免费，但行必须存在——
     // 面板「接口」页按行编辑，没有行就没有 id，"改成本"会静默打空）
     const searchCost = quota.costOf('cost_src', 'search')

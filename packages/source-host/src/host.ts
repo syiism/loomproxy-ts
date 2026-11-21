@@ -4,17 +4,19 @@ import { pathToFileURL } from 'node:url'
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, normalize, sep } from 'node:path'
-import { SDK_VERSION, parseSourceMeta, type PluginManifest } from '@loomproxy/contract'
+import { pluginManifestSchema, SDK_VERSION, type PluginManifest } from '@loomproxy/contract'
 import type { Logger, Upstream } from '@loomproxy/kernel'
 import {
   SourceRegistry,
   createFetchFacade,
+  createPluginSdk,
+  type PluginFactory,
   type RegisteredSource,
   type SettingsReader,
   type SourceDefinition,
 } from '@loomproxy/source-kit'
 import type { DataSourceStore, SettingsStore } from '@loomproxy/store'
-import { compareVersion, describeVersion, listVersions, sdkCompatible } from './manifest.ts'
+import { describePlugin, sdkCompatible } from './manifest.ts'
 import { WorkerPluginHost } from './worker-host.ts'
 import { readZip } from './zip.ts'
 
@@ -45,14 +47,12 @@ export type HostDeps = {
 /** 一次「上传/粘贴安装」的入参：文件内容直接给，不落临时压缩包（省一个解压依赖与一层路径穿越风险） */
 export type InstallInput = {
   code: string
-  version: string
-  /** 相对插件版本目录的文件路径 → 文件内容（文本）。必须含 manifest.json 与 manifest.entry 指向的入口 */
+  /** 相对插件目录的文件路径 → 文件内容（文本）。必须含 manifest.json 与 manifest.entry 指向的入口 */
   files: Record<string, string>
 }
 
-/** 目录名/源码只允许小写字母数字下划线（与 manifest 的 code 约束一致）；版本号禁 `/` 与 `..` */
+/** 目录名/源码只允许小写字母数字下划线（与 manifest 的 code 约束一致） */
 const CODE_RE = /^[a-z0-9_]+$/
-const VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z._-]*$/
 
 /**
  * 把用户给的文件路径收进版本目录内：拒绝绝对路径与 `..`，`./x` 与 `x` 同义。
@@ -86,9 +86,6 @@ const SDK_MAJOR = Number(SDK_VERSION.split('.')[0] ?? 1)
 
 export class SourceHost {
   private readonly registry: SourceRegistry
-  private readonly versions = new Map<string, string[]>()
-  /** 每个 code 当前指向第几个版本（回滚就是下标 -1） */
-  private readonly cursor = new Map<string, number>()
   private readonly loaded = new Map<string, Loaded>()
   private readonly failures = new Map<string, string>()
   /** worker 隔离模式下的插件句柄（in-process 的插件不在这张表里） */
@@ -108,30 +105,18 @@ export class SourceHost {
 
   // ---------- 扫描与加载 ----------
 
-  /** 启动期扫描：每个 code 加载最新版本，失败只记错、不阻断其它插件 */
+  /** 启动期扫描：每个 code 只加载当前目录那一份，失败只记错、不阻断其它插件 */
   scan(): PluginInfo[] {
     if (!existsSync(this.deps.pluginDir)) {
       this.deps.logger.warn(`插件目录不存在，跳过扫描: ${this.deps.pluginDir}`)
       return []
     }
-    const codes = readdirSync(this.deps.pluginDir, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
-      .map((d) => d.name)
-      .sort()
+    const codes = this.codeDirs()
     for (const code of codes) {
-      const dir = join(this.deps.pluginDir, code)
-      const vers = listVersions(dir)
-      if (vers.length === 0) {
-        this.failures.set(code, `目录 ${dir} 下没有版本目录`)
-        continue
-      }
-      this.versions.set(code, vers)
-      this.cursor.set(code, vers.length - 1)
-      const latest = vers[vers.length - 1] as string
       // 单个插件失败不拖垮启动
-      void this.loadVersion(code, latest).catch((e: unknown) => {
+      void this.load(code).catch((e: unknown) => {
         this.recordFailure(code, e)
-        this.deps.logger.error(`加载插件 ${code}@${latest} 失败: ${errText(e)}`)
+        this.deps.logger.error(`加载插件 ${code} 失败: ${errText(e)}`)
       })
     }
     return this.info()
@@ -139,24 +124,9 @@ export class SourceHost {
 
   /** 同步版扫描（测试与需要确定性的装配路径用） */
   async scanSync(): Promise<PluginInfo[]> {
-    const codes = existsSync(this.deps.pluginDir)
-      ? readdirSync(this.deps.pluginDir, { withFileTypes: true })
-          // 点目录是安装暂存区（.staging-xxxx），不是插件；扫进来只会多一条 failed 记录
-          .filter((d) => d.isDirectory() && !d.name.startsWith('.'))
-          .map((d) => d.name)
-          .sort()
-      : []
-    for (const code of codes) {
-      const dir = join(this.deps.pluginDir, code)
-      const vers = listVersions(dir)
-      if (vers.length === 0) {
-        this.failures.set(code, `目录 ${dir} 下没有版本目录`)
-        continue
-      }
-      this.versions.set(code, vers)
-      this.cursor.set(code, vers.length - 1)
-        try {
-        await this.loadVersion(code, vers[vers.length - 1] as string)
+    for (const code of this.codeDirs()) {
+      try {
+        await this.load(code)
       } catch (e) {
         this.recordFailure(code, e)
         this.deps.logger.error(`加载插件 ${code} 失败: ${errText(e)}`)
@@ -165,37 +135,34 @@ export class SourceHost {
     return this.info()
   }
 
-  /** 一号插件换代：manifest 校验 → import → 声明落地 → 原子替换 → 老代 drain */
+  private codeDirs(): string[] {
+    if (!existsSync(this.deps.pluginDir)) return []
+    return readdirSync(this.deps.pluginDir, { withFileTypes: true })
+      // 点目录是安装暂存区（.staging-*/.backup-*），不是插件
+      .filter((d) => d.isDirectory() && !d.name.startsWith('.'))
+      .map((d) => d.name)
+      .filter((n) => CODE_RE.test(n))
+      .sort()
+  }
+
+  /** 重新读当前目录并换代（多版本回退由外部换目录后调这个接口） */
   async reload(code: string): Promise<PluginInfo> {
-    const dir = join(this.deps.pluginDir, code)
-    const vers = listVersions(dir)
-    if (vers.length === 0) throw new Error(`插件 ${code} 没有可用版本`)
-    this.versions.set(code, vers)
-    // reload 永远指向最新版本（回滚是独立动作，不受它影响）。
-    // 指针只在加载成功后前移：失败时候"当前版本"仍是老代。
     try {
-      await this.loadVersion(code, vers[vers.length - 1] as string)
+      await this.load(code)
     } catch (e) {
       this.recordFailure(code, e)
       throw e
     }
-    this.cursor.set(code, vers.length - 1)
     return this.mustInfo(code)
   }
 
   /**
-   * 安装一个插件版本：校验 → 写盘（暂存目录 + 原子 rename）→ 立即换代。
-   *
-   * 三条纪律：
-   * ① **码与版本号都过白名单**再拼路径：`code=../x` 或 `version=../../etc` 就是任意文件写；
-   * ② 先写 `.staging-*` 再 rename：watcher 与扫描只认最终形态，不会捞到写了一半的版本；
-   * ③ 同名版本目录**已存在就拒绝**（不覆盖正在跑的产物），换版本请给新号。
-   *
+   * 安装/替换一个插件：校验 → 写盘（暂存目录 + 原子 rename）→ 立即换代。
+   * 服务只保留当前这一份；历史版本由开发者/发布系统在外部维护，回退=外部换目录后 reload。
    * 注意：安装插件 = 允许在进程内执行任意代码，这是管理员的权力，不是普通调用方的。
    */
   async install(input: InstallInput): Promise<PluginInfo> {
     if (!CODE_RE.test(input.code)) throw new Error(`源码只允许小写字母/数字/下划线：${input.code}`)
-    if (!VERSION_RE.test(input.version)) throw new Error(`版本号非法（不许含 / 或以 . 开头）：${input.version}`)
 
     const files = Object.entries(input.files ?? {})
     if (files.length === 0) throw new Error('没有文件内容')
@@ -207,24 +174,23 @@ export class SourceHost {
     } catch (e) {
       throw new Error(`manifest.json 不是合法 JSON：${errText(e)}`)
     }
-    // 声明位校验走与扫描同一条（zod）：非法 media_type/setting type/空 actions 在这里就失败，
+    // 声明位校验走与扫描同一条（zod）：非法 media_type/version/actions 在这里就失败，
     // 不要等写进盘里再由 scan 记 failed
-    parseSourceMeta(manifest.meta)
+    pluginManifestSchema.parse(manifest)
     if (manifest.meta.code !== input.code) {
       throw new Error(`manifest.meta.code=${manifest.meta.code} 与提交的源码 ${input.code} 不一致`)
     }
     const entryRel = safeRelPath(String(manifest.entry ?? './index.mjs'))
     if (input.files[entryRel] === undefined) throw new Error(`入口文件 ${entryRel} 不在提交的内容里`)
 
-    return this.writeAndActivate(input.code, input.version, input.files)
+    return this.writeAndActivate(input.code, input.files)
   }
 
   /**
-   * 安装一个**插件包**（zip）：`manifest.json` 可以在包根，也可以带 `<code>/<version>/` 前缀
-   * （`zip -r` 打包 plugin 目录的产物就是这个形状，不用运维手工拆一层路径）。
-   * 版本号优先取请求给的，其次取前缀目录名，都没有就报错让调用方明说。
+   * 安装一个**插件包**（zip）：manifest.json 可以在包根，也可以带 `<code>/` 或旧式 `<code>/<version>/` 前缀
+   * （`zip -r` 打包 plugin 目录的产物就是这个形状）。版本从 manifest 读，不再问调用方。
    */
-  async installPackage(input: { bytes: Uint8Array; version?: string }): Promise<PluginInfo> {
+  async installPackage(input: { bytes: Uint8Array }): Promise<PluginInfo> {
     const entries = readZip(input.bytes)
     // 找 manifest.json：必须恰好一份（多份说明包里塞了两个源）
     const manifests = [...entries.keys()].filter((n) => n === 'manifest.json' || n.endsWith('/manifest.json'))
@@ -252,68 +218,47 @@ export class SourceHost {
     if (!CODE_RE.test(code)) {
       throw new Error(`manifest.meta.code 缺失或非法（只允许小写字母/数字/下划线）：${code}`)
     }
-    // 前缀 `<code>/<version>` 时顺手把版本号带出来（少于两段就只可能是 <code>）
-    const segs = root.split('/').filter(Boolean)
-    const fromPath = segs.length >= 2 ? (segs[segs.length - 1] as string) : ''
-    const version = input.version ?? (VERSION_RE.test(fromPath) ? fromPath : '')
-    if (!version) throw new Error('包里没有带版本号目录，请在请求里给 version')
-    return this.install({ code, version, files })
+    return this.install({ code, files })
   }
 
-  /** 写盘（暂存 + 原子 rename）然后换代；失败时按"有没有老代"决定留不留新目录 */
-  private async writeAndActivate(code: string, version: string, files: Record<string, string>): Promise<PluginInfo> {
-    const codeDir = join(this.deps.pluginDir, code)
-    const target = join(codeDir, version)
-    if (existsSync(target)) throw new Error(`版本 ${code}@${version} 已存在（换一个版本号，或先卸载）`)
+  /** 写盘（暂存 + 原子 rename）然后换代；失败时恢复老目录（老代继续服务） */
+  private async writeAndActivate(code: string, files: Record<string, string>): Promise<PluginInfo> {
+    const target = join(this.deps.pluginDir, code)
+    const stamp = randomBytes(6).toString('hex')
+    const staging = join(this.deps.pluginDir, `.staging-${stamp}`)
+    const backup = join(this.deps.pluginDir, `.backup-${stamp}`)
+    const hadGeneration = this.loaded.has(code)
 
     mkdirSync(this.deps.pluginDir, { recursive: true })
-    const staging = join(this.deps.pluginDir, `.staging-${randomBytes(6).toString('hex')}`)
     try {
       for (const [rawPath, content] of Object.entries(files)) {
-        const rel = safeRelPath(rawPath)
-        const abs = join(staging, rel)
+        const abs = join(staging, safeRelPath(rawPath))
         mkdirSync(dirname(abs), { recursive: true })
         writeFileSync(abs, content)
       }
-      mkdirSync(codeDir, { recursive: true })
+      if (existsSync(target)) renameSync(target, backup)
       renameSync(staging, target)
     } catch (e) {
       rmSync(staging, { recursive: true, force: true })
+      if (existsSync(backup) && !existsSync(target)) renameSync(backup, target)
       throw e
     }
 
-    // 换代失败：老代还在跑就保留新目录（供排查/回滚），没有老代就清掉——
-    // 否则下一次扫描会把一个带病的版本当成"当前版本"，每次启动都报同一条错
-    const hadGeneration = this.loaded.has(code)
     try {
       return await this.reload(code)
     } catch (e) {
-      if (!hadGeneration) {
-        rmSync(target, { recursive: true, force: true })
-        this.versions.delete(code)
-      }
+      // 没老代就清掉带病目录，避免每次启动报同一条错；有老代则回滚目录并保留老代在飞服务
+      rmSync(target, { recursive: true, force: true })
+      if (existsSync(backup)) renameSync(backup, target)
+      if (!hadGeneration) this.registry.remove(code)
       throw e
+    } finally {
+      rmSync(backup, { recursive: true, force: true })
     }
   }
 
-  /** 回滚到上一个版本目录（产物本来就在盘上，不用重新打包） */
-  async rollback(code: string): Promise<PluginInfo> {
-    const vers = this.versions.get(code) ?? []
-    const cur = this.cursor.get(code) ?? vers.length - 1
-    const next = cur - 1
-    if (next < 0) throw new Error(`插件 ${code} 没有更早的版本可回滚`)
-    try {
-      await this.loadVersion(code, vers[next] as string)
-    } catch (e) {
-      this.recordFailure(code, e)
-      throw e
-    }
-    this.cursor.set(code, next)
-    return this.mustInfo(code)
-  }
-
-  private async loadVersion(code: string, version: string): Promise<void> {
-    const desc = describeVersion(join(this.deps.pluginDir, code), version)
+  private async load(code: string): Promise<void> {
+    const desc = describePlugin(join(this.deps.pluginDir, code))
 
     if (desc.manifest.meta.code !== code) {
       throw new Error(`manifest.meta.code=${desc.manifest.meta.code} 与目录名 ${code} 不一致`)
@@ -323,11 +268,14 @@ export class SourceHost {
     }
 
     // 缓存破坏导入：in-process 模型下这是"换代"的唯一手段
-    const url = `${pathToFileURL(desc.entry).href}?v=${encodeURIComponent(version)}-${Date.now()}`
-    const mod = (await import(url)) as { default?: SourceDefinition }
-    const def = mod.default
+    const url = `${pathToFileURL(desc.entry).href}?v=${encodeURIComponent(desc.version)}-${Date.now()}`
+    const mod = (await import(url)) as { default?: PluginFactory }
+    if (typeof mod.default !== 'function') {
+      throw new Error('插件入口必须 export default (sdk) => ({ handlers })（SDK 2）')
+    }
+    const def = mod.default(createPluginSdk())
     if (!def || typeof def !== 'object' || !def.handlers) {
-      throw new Error('插件入口必须 export default defineSource({...})')
+      throw new Error('插件工厂必须返回 { handlers }')
     }
 
     // 声明的动作必须有 handler（否则运行期 404，属"带病装配"）
@@ -352,7 +300,7 @@ export class SourceHost {
       const worker = new WorkerPluginHost({
         code,
         entry: desc.entry,
-        version,
+        version: desc.version,
         actions: desc.manifest.meta.actions,
         logger: this.deps.logger,
         upstream: this.deps.upstream,
@@ -366,17 +314,17 @@ export class SourceHost {
       this.deps.registry.swap({
         code,
         meta: desc.manifest.meta,
-        version,
+        version: desc.version,
         isolation: desc.manifest.isolation,
         state: 'active',
         ...(desc.manifest.params ? { params: desc.manifest.params } : {}),
         def: { handlers: {} },
         invoke: (action, params) => worker.call(action, params),
       })
-      this.loaded.set(code, { code, version, dir: desc.dir, entry: desc.entry, manifest: desc.manifest })
+      this.loaded.set(code, { code, version: desc.version, dir: desc.dir, entry: desc.entry, manifest: desc.manifest })
       this.failures.delete(code)
       this.loadCounts.set(code, (this.loadCounts.get(code) ?? 0) + 1)
-      this.deps.logger.info(`插件 ${code}@${version} 已生效（worker 隔离，generation=${this.registry.generation}）`)
+      this.deps.logger.info(`插件 ${code}@${desc.version} 已生效（worker 隔离，generation=${this.registry.generation}）`)
       return
     }
 
@@ -392,7 +340,7 @@ export class SourceHost {
     this.deps.registry.swap({
       code,
       meta: desc.manifest.meta,
-      version,
+      version: desc.version,
       isolation: desc.manifest.isolation,
       state: 'active',
       ...(desc.manifest.params ? { params: desc.manifest.params } : {}),
@@ -406,13 +354,13 @@ export class SourceHost {
         ...(def.pool.config ? { config: def.pool.config } : {}),
       })
     }
-    this.loaded.set(code, { code, version, dir: desc.dir, entry: desc.entry, manifest: desc.manifest })
+    this.loaded.set(code, { code, version: desc.version, dir: desc.dir, entry: desc.entry, manifest: desc.manifest })
     this.failures.delete(code)
     this.loadCounts.set(code, (this.loadCounts.get(code) ?? 0) + 1)
-    this.deps.logger.info(`插件 ${code}@${version} 已生效（generation=${this.registry.generation}）`)
+    this.deps.logger.info(`插件 ${code}@${desc.version} 已生效（generation=${this.registry.generation}）`)
 
     // 老代 drain：等它身上的在飞请求走完，再调 dispose
-    if (prev && prev.version !== version) {
+    if (prev && prev.version !== desc.version) {
       await this.drain(code)
       if (prev.def.dispose) {
         try {
@@ -548,9 +496,6 @@ export class SourceHost {
     return this.deps.settings
   }
 
-  latestVersions(): Record<string, string[]> {
-    return Object.fromEntries([...this.versions.entries()].map(([k, v]) => [k, [...v].sort(compareVersion)]))
-  }
 }
 
 function errText(e: unknown): string {

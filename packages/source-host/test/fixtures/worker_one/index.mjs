@@ -1,5 +1,5 @@
 // 夹具：跑在 worker 线程里。**不取数**，只证明"worker 里的 handler 能跑通并回传 DTO"。
-export default {
+export default (sdk) => ({
   handlers: {
     search: async (ctx) => ({
       bookList: [
@@ -16,4 +16,4 @@ export default {
       ],
     }),
   },
-}
+})

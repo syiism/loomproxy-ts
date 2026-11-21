@@ -200,7 +200,7 @@ Monitor 早于 Access/Billing/RateLimit；IPBlock 晚于 CORS；RequiredParams �
 | 卡密 | `GET/POST /redeem-codes`、`POST /redeem-codes/:id/revoke`、`POST /redeem-codes/revoke-selected`、`DELETE /redeem-codes/batch/:batch_no` |
 | 源配置/分组/定时 | `GET/PUT /source-configs`；`GET/POST /source-groups`、`PATCH/DELETE /source-groups/:id`、`PUT /source-groups/:id/members`、`POST /source-groups/:id/apply-limits`；`GET/POST /source-schedules`、`PATCH/DELETE /source-schedules/:id` |
 | 数据源 | `GET/POST /data-sources`、`PATCH/DELETE /data-sources/:id` |
-| 源插件（热更新） | `GET /admin/sources/plugins`、`GET /admin/sources/versions`；`POST /admin/sources/:code/{reload,rollback,disable,unload}`；`POST /admin/sources/reload-all` —— ④ §7 批准并已落地 |
+| 源插件（热更新） | `GET /admin/sources/plugins`；`POST /admin/sources/:code/{reload,disable,unload}`（SDK 2 去掉 versions/rollback/manifest 文本安装）；`POST /admin/sources/reload-all` —— ④ §7 批准并已落地 |
 
 `/monitor/report.html` 是**服务端渲染 HTML**（不是 JSON），TS 版要么照抄模板，要么退化成 302 到面板页——
 **这条要单独拍**（面板里有入口链到它）。

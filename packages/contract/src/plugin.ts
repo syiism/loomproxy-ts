@@ -2,8 +2,9 @@
 import { z } from 'zod'
 import { sourceMetaSchema } from './source-meta.ts'
 
-export const SDK_VERSION = '1.0.0'
-export const SDK_RANGE = '^1'
+// SDK 2：插件只做类型导入，运行时 helper 由宿主注入；插件目录不再自带 SDK/zod，也没有服务内多版本目录。
+export const SDK_VERSION = '2.0.0'
+export const SDK_RANGE = '^2'
 
 /** in-process = 默认（热更新靠缓存破坏导入）；worker = 隔离（CPU 重活/第三方插件） */
 export const ISOLATIONS = ['in-process', 'worker'] as const
@@ -12,6 +13,8 @@ export type Isolation = (typeof ISOLATIONS)[number]
 export const pluginManifestSchema = z
   .object({
     sdk_version: z.string().regex(/^[\^~]?\d+(\.\d+)*$/),
+    /** 插件版本：多版本由开发者/发布系统外部维护，服务只认当前目录这一份 */
+    version: z.string().regex(/^\d+\.\d+(\.\d+)?([-.][0-9A-Za-z.]+)*$/),
     isolation: z.enum(ISOLATIONS).default('in-process'),
     entry: z.string().min(1),
     /**
