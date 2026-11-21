@@ -89,6 +89,7 @@ PLUGIN_DIR=plugins node apps/server/src/main.ts          # ③ 起服务 → cur
 - 未接域一律 501 + 人话（`notWired()`），不要返回成功空响应。
 - JWT claims 必须与 Go `utils/jwt.go` 同形（`uid`/`username` + jti/iat/iss/sub，`exp` 可缺省）；
   **角色永远从库里读**，不要往 token 里塞 roles。外来 jti（本库没有）按签名放行，本库有的必须有效。
+  登录/登出必须下发/清除 HttpOnly Cookie（名同 Go `TokenCookieName`），否则客户端沿用的旧票被会话裁剪后只会拿到 401。
 - 设置项**声明了就要有读取方**：`BUILTIN_SETTINGS`（store/seed.ts）里每条内置设置在代码里都要有人读
   （公告→/announcement；注册开关/默认角色/默认套餐/邮箱名单→/auth/register；维护模式→dispatch；
   验证码场景→/verify/config；jwt_expire_hours→登录签发）。新增键时同一批补读取方与用例，

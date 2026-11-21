@@ -3,7 +3,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { fail, ok, normalizeUsername, validUsername } from '@loomproxy/contract'
 import type { Config } from '@loomproxy/kernel'
-import { resolveIdentity, issueToken, tokenFromRequest, verifyToken } from './auth.ts'
+import { authCookie, clearAuthCookie, resolveIdentity, issueToken, tokenFromRequest, verifyToken } from './auth.ts'
 import { lockedUntil, recordAttempt } from './login-limiter.ts'
 import { createClock } from '@loomproxy/kernel'
 import { Check, Consume, sceneEnabledFor, VERIFY_ERR, type VerifyDeps } from './verify.ts'
@@ -137,12 +137,16 @@ export function registerAuthRoutes(app: FastifyInstance, deps: Deps): void {
       if (removed > 0) console.error(`[auth] 多设备监控自动移出会话 user_id=${hit.user.id} 移出=${removed} 保留=${maxKeep}`)
     }
     users.touchLogin(hit.user.id)
+    // 与 Go utils.SetTokenCookie 同口径：登录时把同一枚 JWT 写成 HttpOnly Cookie，
+    // 否则浏览器里旧的 Go Cookie 不会刷新，下一次数据面请求会拿失效 jti 撞 401。
+    reply.header('set-cookie', authCookie(token, effectiveHours))
     return ok({ token, expires_at, user: hit.user })
   })
 
-  app.post('/auth/logout', async (req) => {
+  app.post('/auth/logout', async (req, reply) => {
     const jti = jtiOf(req, config)
     if (jti) stores.sessions?.revoke(jti)
+    reply.header('set-cookie', clearAuthCookie())
     return ok({})
   })
 

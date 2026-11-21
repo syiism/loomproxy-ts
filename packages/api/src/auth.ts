@@ -35,6 +35,20 @@ type Claims = {
 /** 登录态 Cookie 名：与 Go 版 utils/jwt.go 的 TokenCookieName 同一个字面量（互认） */
 export const TOKEN_COOKIE = 'loomproxy_token'
 
+/**
+ * Go utils.SetTokenCookie 的同口径 Cookie：HttpOnly + Lax + Path=/。
+ * -1（永不过期）落 10 年，<=0 回退 7 天。TS 之前只在 JSON 里回 token、不下发 Cookie，
+ * 浏览器里残留的 Go 版 Cookie 就再也不会被刷新，过期/被挤掉后只能拿到 401。
+ */
+export function authCookie(token: string, expireHours: number): string {
+  const maxAge = expireHours === -1 ? 10 * 365 * 24 * 3600 : expireHours > 0 ? expireHours * 3600 : 7 * 24 * 3600
+  return `${TOKEN_COOKIE}=${token}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Lax`
+}
+
+export function clearAuthCookie(): string {
+  return `${TOKEN_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`
+}
+
 /** 身份解析需要的存储（会话吊销要现行查库：撤销之后旧票必须立刻失效） */
 export type IdentityDeps = {
   sessions?: { isActive(jti: string): boolean; exists?(jti: string): boolean }

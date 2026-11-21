@@ -26,7 +26,7 @@ import {
   SqliteDb,
 } from '@loomproxy/store'
 import { SourceHost } from '@loomproxy/source-host'
-import { buildServer, signToken } from '../src/index.ts'
+import { buildServer, signToken, TOKEN_COOKIE } from '../src/index.ts'
 import { RateLimiter } from '@loomproxy/gate'
 
 const SECRET = 'test-secret-0123456789abcdef0123456789'
@@ -446,6 +446,13 @@ test('登录：错密码 401，对密码拿到 token，/auth/me 认 token', asyn
     }
     assert.equal(body.code, 0)
     assert.ok(body.data.token.split('.').length === 3)
+    // Go utils.SetTokenCookie：登录必须下发 HttpOnly Cookie，否则浏览器里的旧票永远不刷新
+    const cookie = ok.headers['set-cookie'] as string
+    assert.ok(cookie.startsWith(`${TOKEN_COOKIE}=`), 'Set-Cookie 名与 TokenCookieName 一致')
+    assert.match(cookie, /Path=\//)
+    assert.match(cookie, /HttpOnly/)
+    assert.match(cookie, /SameSite=Lax/)
+    assert.match(cookie, /Max-Age=\d+/)
     // 面板读 `r.code`（isAdmin() 就是这么判的），所以 roles 是对象数组
     assert.equal(body.data.user.roles[0]?.code, 'admin')
 
@@ -455,6 +462,19 @@ test('登录：错密码 401，对密码拿到 token，/auth/me 认 token', asyn
 
     const anon = await app.inject({ method: 'GET', url: '/auth/me' })
     assert.equal(anon.statusCode, 401)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+
+test('登出清 Cookie（Go ClearTokenCookie 同口径）', async () => {
+  const { app, root } = await makeApp()
+  try {
+    const r = await app.inject({ method: 'POST', url: '/auth/logout' })
+    assert.equal(r.statusCode, 200)
+    assert.match(r.headers['set-cookie'] as string, new RegExp(`${TOKEN_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`))
   } finally {
     await app.close()
     rmSync(root, { recursive: true, force: true })
