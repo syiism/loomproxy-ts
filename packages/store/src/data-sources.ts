@@ -22,6 +22,8 @@ export interface DataSourceStore {
   get(name: string): DataSourceRow | undefined
   /** 只列启用的，按 sort_order,id 升序 */
   listEnabled(): DataSourceRow[]
+  /** 含停用源，按 sort_order,id 升序（面板筛选下拉要能看到全部配置位） */
+  listAll(): DataSourceRow[]
 }
 
 export class InMemoryDataSources implements DataSourceStore {
@@ -60,5 +62,9 @@ export class InMemoryDataSources implements DataSourceStore {
     return [...this.rows.values()]
       .filter((r) => r.status === 1)
       .sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name))
+  }
+
+  listAll(): DataSourceRow[] {
+    return [...this.rows.values()].sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name))
   }
 }

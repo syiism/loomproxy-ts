@@ -6,7 +6,7 @@
       <input v-model="filters.username" placeholder="用户名" class="input sm:w-40 font-mono" @keydown.enter="doSearch">
       <select v-model="filters.sourceCode" class="input sm:w-48">
         <option value="">全部数据源</option>
-        <option v-for="s in sourceCodes" :key="s" :value="s">{{ s }}</option>
+        <option v-for="s in sourceCodes" :key="s" :value="s">{{ sourceLabels[s] || s }}</option>
       </select>
       <button @click="doSearch" class="btn-ghost whitespace-nowrap">筛选</button>
     </div>
@@ -59,6 +59,7 @@ const page = ref(1)
 const pageSize = ref(20)
 const filters = ref({ username: '', sourceCode: '' })
 const sourceCodes = ref([])
+const sourceLabels = ref({}) // code → 中文显示名；值仍是 code，筛选参数不变
 
 const doSearch = () => { page.value = 1; load() }
 const goPage = (p) => { page.value = p; load() }
@@ -76,6 +77,7 @@ const load = async () => {
     total.value = data.total || 0
     pageSize.value = data.page_size || 20
     sourceCodes.value = data.source_codes || []
+    sourceLabels.value = data.source_display_names || {}
   } catch (e) {
     total.value = -1 // 读失败写成"不可用"，不许留成 0（待办清单 P99 列表页那一格）
     error.value = e.message

@@ -156,14 +156,22 @@ export function registerQuotaRoutes(app: FastifyInstance, deps: AdminContext): v
     const q = stores.quota
     if (!q) return unavailable(reply, '额度存储未接')
     const qs = req.query as Record<string, string>
-    return ok(
-      q.usagePage({
+    // 面板「用量流水」的数据源下拉读 source_codes（Go ListUsageLogs 同名字段）：
+    // 列全部配置位（含停用源），不依赖流水里有没有记录——历史流水里可能有已停用源的消耗。
+    // source_display_names 是 TS 附加的显示名映射（Go 面板直接用 code，这里为了可读性给中文名）。
+    const allSources = deps.dataSources?.listAll() ?? []
+    const sourceCodes = allSources.map((d) => d.name)
+    const sourceDisplayNames = Object.fromEntries(allSources.map((d) => [d.name, d.display_name || d.name]))
+    return ok({
+      ...q.usagePage({
         page: clampPage(qs['page']),
         pageSize: clampPageSize(qs['page_size']),
         ...(qs['username'] ? { username: qs['username'] } : {}),
         ...(qs['group'] ? { groupCode: qs['group'] } : {}),
       }),
-    )
+      source_codes: sourceCodes,
+      source_display_names: sourceDisplayNames,
+    })
   })
 
   app.get('/admin/quota-costs', async (req, reply) => {

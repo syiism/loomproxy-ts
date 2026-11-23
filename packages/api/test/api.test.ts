@@ -1018,7 +1018,7 @@ test('reload-all：一次把所有插件换代，失败的各留 last_error', as
 })
 
 test('额度域：授权即限额、超了 429、成功记账进流水（一次调用一行）', async () => {
-  const { app, root, quota, plans } = await makeApp()
+  const { app, root, quota, plans, dataSources } = await makeApp()
   try {
     const plan = plans.list()[0]!
     // 接口成本登记（装配时按插件的动作自动写；这里直接写同样的行）
@@ -1033,12 +1033,37 @@ test('额度域：授权即限额、超了 429、成功记账进流水（一次�
     assert.equal(second.statusCode, 429)
     assert.match((second.json() as { msg: string }).msg, /额度已用完/)
 
+    // 历史流水里的源可能已经停用，下拉仍要能选到它
+    dataSources.create({ name: 'off_one', display_name: '停用源', category: 'x', status: 0 })
     const logs = await app.inject({ method: 'GET', url: '/admin/usage-logs', headers: { authorization: `Bearer ${adminToken()}` } })
-    const page = (logs.json() as { data: { total: number; list: Array<{ group_code: string; interface: string; cost: number }> } }).data
+    const page = (logs.json() as {
+      data: {
+        total: number
+        list: Array<{ group_code: string; interface: string; cost: number }>
+        source_codes: string[]
+        source_display_names: Record<string, string>
+      }
+    }).data
     assert.equal(page.total, 1, '只记成功那一发')
     assert.equal(page.list[0]?.group_code, 'demo_one')
     assert.equal(page.list[0]?.interface, 'search')
     assert.equal(page.list[0]?.cost, 1)
+    assert.deepEqual([...page.source_codes].sort(), ['demo_one', 'off_one'], '面板数据源下拉包含停用源')
+    assert.equal(page.source_display_names['demo_one'], '演示一号')
+    assert.equal(page.source_display_names['off_one'], '停用源')
+
+    const filtered = await app.inject({
+      method: 'GET',
+      url: '/admin/usage-logs?group=demo_one',
+      headers: { authorization: `Bearer ${adminToken()}` },
+    })
+    assert.equal((filtered.json() as { data: { total: number } }).data.total, 1)
+    const none = await app.inject({
+      method: 'GET',
+      url: '/admin/usage-logs?group=off_one',
+      headers: { authorization: `Bearer ${adminToken()}` },
+    })
+    assert.equal((none.json() as { data: { total: number } }).data.total, 0)
 
     // 看板（普通用户视角）：形状照 Go 的 DashboardResponse，源卡读 effective_total/used_today/remaining/usage_pct
     const dash = await app.inject({ method: 'GET', url: '/quota/dashboard', headers: { authorization: `Bearer ${userToken()}` } })
