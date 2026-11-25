@@ -167,6 +167,11 @@ token 缓存——少一条会过期的凭证状态。
 - `explore`（发现）未做：Go 版声明了，但上游 `cell/change` 实测只返回卡片模板。
 - 协议层用全局 `fetch`，不接我们的 `AbortSignal`：客户端取消不会中断上游请求。
 
+## 许可
+
+本项目以 **GNU Affero General Public License v3.0 或更新版本**（`AGPL-3.0-or-later`）开源，
+完整条款见仓库根目录 [`LICENSE`](LICENSE)。网络服务端修改同样受 AGPL 第 13 条约束。
+
 ## 边界
 
 - 插件 = 任意代码执行：只从本地受信目录加载，**不提供从 URL 安装**（④ §9）。
