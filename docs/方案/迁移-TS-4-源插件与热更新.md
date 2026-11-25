@@ -94,9 +94,13 @@ plugins/
 ## 4. 加载 / 更新 / 卸载时序（蓝绿两代）
 
 ```
-reload(code):
+reload(code, force?):
+  0. 算插件目录内容指纹（相对路径 + 文件字节 SHA-256；软链/暂存目录不算）。
+     active 源且指纹与上次成功加载相同且非 force → 只重落幂等声明（settings/dataSources/
+     onPluginActive），直接返回当前 PluginInfo：**不 import、不 swap、generation/loads 都不动**。
+     failed/disabled 源即使指纹相同也要重试成功一次，否则坏插件永远修不回来。
   1. 读新版本目录 → manifest 校验（zod：字段/动作集/媒介/设置类型/sdk_version）
-  2. import(新 entry ?v=version) → 拿到 handlers（构造期不做 IO）
+  2. import(新 entry ?v=version-<唯一序号>) → 拿到 handlers（构造期不做 IO）
   3. 自检（可选 manifest.self_check）：拿一份内置 fixture 走一遍纯解析路径
         ├─ 失败 → 标记 failed，保留老代，返回 4xx + 原因
   4. 运行期声明落地（幂等）：upsert data_sources 行 / settings 行（只对账 type）/ 调 onBoot / 注册池
@@ -108,6 +112,9 @@ reload(code):
 
 **in-flight 不中断的机制**：请求进来时从 registry 取一次 `{gen, handler}` 并持有到结束，
 所以第 5 步的替换只影响"替换之后新进来的请求"。这是整个方案里唯一不能妥协的实现细节。
+
+管理端点 `POST /admin/sources/:code/reload?force=1` 可跳过第 0 步短路（强制重试/重落声明）；
+普通面板按钮不带该参数。
 
 **回退（SDK 2）**：服务没有 rollback 端点。开发者/发布系统用旧版本目录替换 `plugins/<code>/`，
 再调 `POST /admin/sources/:code/reload`；在飞请求仍由老代 handler 服务到 drain 结束。

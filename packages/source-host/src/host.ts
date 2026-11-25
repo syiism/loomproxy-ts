@@ -1,4 +1,5 @@
-// 插件宿主：目录扫描 → manifest 校验 → import() → 声明落地 → 原子换代 → 老代 drain。
+// 插件宿主：目录扫描 → manifest 校验 → 内容指纹 → import() → 声明落地 → 原子换代 → 老代 drain。
+// 指纹没变（active 源）就只重落幂等声明、不换代：watcher/手动/批量 reload 不再各自涨一代。
 // in-process 模型下**代码不会被回收**，所以换代只是换注册表指针（迁移-TS-4 §2/§4）。
 import { pathToFileURL } from 'node:url'
 import { randomBytes } from 'node:crypto'
@@ -17,6 +18,7 @@ import {
 } from '@loomproxy/source-kit'
 import type { DataSourceStore, SettingsStore } from '@loomproxy/store'
 import { describePlugin, sdkCompatible } from './manifest.ts'
+import { pluginFingerprint } from './fingerprint.ts'
 import { WorkerPluginHost } from './worker-host.ts'
 import { readZip } from './zip.ts'
 
@@ -80,9 +82,12 @@ export type PluginInfo = {
   last_error?: string
 }
 
-type Loaded = { code: string; version: string; dir: string; entry: string; manifest: PluginManifest }
+type Loaded = { code: string; version: string; dir: string; entry: string; manifest: PluginManifest; fingerprint: string }
 
 const SDK_MAJOR = Number(SDK_VERSION.split('.')[0] ?? 1)
+
+/** 同一毫秒内两次 reload 不能撞到同一个 import URL，否则失败模块会被复用 */
+let importSeq = 0
 
 export class SourceHost {
   private readonly registry: SourceRegistry
@@ -92,6 +97,8 @@ export class SourceHost {
   private readonly workers = new Map<string, WorkerPluginHost>()
   /** 每个 code 的**成功加载次数**（展示用；generation 是全局限代序号，两件事别混） */
   private readonly loadCounts = new Map<string, number>()
+  /** 同一个 code 的 reload 串行：watcher 与手动/批量 reload 会撞车，晚到的必须看到前一次写入的指纹 */
+  private readonly reloadLocks = new Map<string, Promise<void>>()
   private readonly inflight = new Map<string, number>()
   private readonly drainWaiters = new Map<string, (() => void)[]>()
   private readonly fetch: ReturnType<typeof createFetchFacade>
@@ -145,15 +152,32 @@ export class SourceHost {
       .sort()
   }
 
-  /** 重新读当前目录并换代（多版本回退由外部换目录后调这个接口） */
-  async reload(code: string): Promise<PluginInfo> {
+  private async serializeReload<T>(code: string, task: () => Promise<T>): Promise<T> {
+    const prev = this.reloadLocks.get(code) ?? Promise.resolve()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const chain = prev.then(() => gate)
+    this.reloadLocks.set(code, chain)
+    await prev
     try {
-      await this.load(code)
-    } catch (e) {
-      this.recordFailure(code, e)
-      throw e
+      return await task()
+    } finally {
+      release()
+      if (this.reloadLocks.get(code) === chain) this.reloadLocks.delete(code)
     }
-    return this.mustInfo(code)
+  }
+
+  /** 重新读当前目录；内容没变就只读状态、不换代（多版本回退由外部换目录后调这个接口） */
+  async reload(code: string, opts: { force?: boolean } = {}): Promise<PluginInfo> {
+    return await this.serializeReload(code, async () => {
+      try {
+        await this.load(code, opts.force === true)
+      } catch (e) {
+        this.recordFailure(code, e)
+        throw e
+      }
+      return this.mustInfo(code)
+    })
   }
 
   /**
@@ -257,7 +281,14 @@ export class SourceHost {
     }
   }
 
-  private async load(code: string): Promise<void> {
+  /** 声明落地：幂等；代码没变的 reload 也重跑一次，便于修被误删的设置/配置行 */
+  private landDeclarations(manifest: PluginManifest): void {
+    this.deps.settings.register(manifest.meta.settings ?? [])
+    this.deps.dataSources.upsert(manifest.meta)
+    this.deps.onPluginActive?.(manifest.meta)
+  }
+
+  private async load(code: string, force = false): Promise<void> {
     const desc = describePlugin(join(this.deps.pluginDir, code))
 
     if (desc.manifest.meta.code !== code) {
@@ -267,8 +298,18 @@ export class SourceHost {
       throw new Error(`sdk_version=${desc.manifest.sdk_version} 与宿主 ${SDK_VERSION} 不兼容`)
     }
 
+    const fingerprint = pluginFingerprint(desc.dir)
+    const current = this.registry.get(code)
+    const prior = this.loaded.get(code)
+    // failed/disabled 即使指纹相同也要重试（否则坏插件永远修不回来）；active 才算"无变化可跳"
+    if (!force && current?.state === 'active' && prior?.fingerprint === fingerprint) {
+      this.landDeclarations(desc.manifest)
+      this.deps.logger.debug(`插件 ${code}@${desc.version} 代码未变化，跳过换代`)
+      return
+    }
+
     // 缓存破坏导入：in-process 模型下这是"换代"的唯一手段
-    const url = `${pathToFileURL(desc.entry).href}?v=${encodeURIComponent(desc.version)}-${Date.now()}`
+    const url = `${pathToFileURL(desc.entry).href}?v=${encodeURIComponent(desc.version)}-${Date.now()}-${++importSeq}`
     const mod = (await import(url)) as { default?: PluginFactory }
     if (typeof mod.default !== 'function') {
       throw new Error('插件入口必须 export default (sdk) => ({ handlers })（SDK 2）')
@@ -294,9 +335,7 @@ export class SourceHost {
         await prevWorker.terminate()
         this.workers.delete(code)
       }
-      this.deps.settings.register(desc.manifest.meta.settings ?? [])
-      this.deps.dataSources.upsert(desc.manifest.meta)
-      this.deps.onPluginActive?.(desc.manifest.meta)
+      this.landDeclarations(desc.manifest)
       const worker = new WorkerPluginHost({
         code,
         entry: desc.entry,
@@ -321,7 +360,7 @@ export class SourceHost {
         def: { handlers: {} },
         invoke: (action, params) => worker.call(action, params),
       })
-      this.loaded.set(code, { code, version: desc.version, dir: desc.dir, entry: desc.entry, manifest: desc.manifest })
+      this.loaded.set(code, { code, version: desc.version, dir: desc.dir, entry: desc.entry, manifest: desc.manifest, fingerprint })
       this.failures.delete(code)
       this.loadCounts.set(code, (this.loadCounts.get(code) ?? 0) + 1)
       this.deps.logger.info(`插件 ${code}@${desc.version} 已生效（worker 隔离，generation=${this.registry.generation}）`)
@@ -329,9 +368,7 @@ export class SourceHost {
     }
 
     // 声明落地：幂等（不覆盖管理员改过的值与 status）
-    this.deps.settings.register(desc.manifest.meta.settings ?? [])
-    this.deps.dataSources.upsert(desc.manifest.meta)
-    this.deps.onPluginActive?.(desc.manifest.meta)
+    this.landDeclarations(desc.manifest)
     if (def.onBoot) {
       await def.onBoot({ settings: this.deps.settings, log: (m) => this.deps.logger.info(`onBoot: ${m}`) })
     }
@@ -354,7 +391,7 @@ export class SourceHost {
         ...(def.pool.config ? { config: def.pool.config } : {}),
       })
     }
-    this.loaded.set(code, { code, version: desc.version, dir: desc.dir, entry: desc.entry, manifest: desc.manifest })
+    this.loaded.set(code, { code, version: desc.version, dir: desc.dir, entry: desc.entry, manifest: desc.manifest, fingerprint })
     this.failures.delete(code)
     this.loadCounts.set(code, (this.loadCounts.get(code) ?? 0) + 1)
     this.deps.logger.info(`插件 ${code}@${desc.version} 已生效（generation=${this.registry.generation}）`)

@@ -59,7 +59,8 @@ export class SourceRegistry {
       version: '-',
       isolation: 'in-process',
       state: 'failed',
-      generation: ++this.generationSeq,
+      // 失败不是一次成功换代：不 bump generation，避免没换代码也让 /datasources 缓存键失效
+      generation: this.generationSeq,
       lastError: err,
       def: { handlers: {} },
     })

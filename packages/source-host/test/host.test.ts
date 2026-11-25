@@ -1,6 +1,6 @@
 import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer } from 'node:http'
@@ -301,13 +301,111 @@ test('世代与加载次数是两件事：generation 是全局序号（跨源单
     assert.equal(ok.loads, 1)
     assert.equal(bad.loads, 0, '加载失败不算一次加载')
 
-    // 只 reload ok_one：它的 generation 前进、loads+1；别的源两格都不动
+    // 代码没变的 reload 不换代；真改代码才 generation 前进、loads+1
+    await host.reload('ok_one')
+    assert.equal(host.info().find((i) => i.code === 'ok_one')!.generation, ok.generation)
+    const entry = join(dir, 'ok_one', 'index.mjs')
+    writeFileSync(entry, readFileSync(entry, 'utf8').replace('v2 body', 'v2 body changed'))
     await host.reload('ok_one')
     const after = new Map(host.info().map((i) => [i.code, i]))
     assert.ok(after.get('ok_one')!.generation > ok.generation)
     assert.equal(after.get('ok_one')!.loads, 2)
     assert.equal(after.get('bad_manifest')!.generation, bad.generation)
     await host.dispose()
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('reload 去重：代码没变不换代，内容真变才 +1；touch 不算变化', async () => {
+  const dir = tmpPlugins()
+  try {
+    const { host, registry } = makeHost(dir)
+    const before = (await host.scanSync()).find((i) => i.code === 'ok_one')!
+    assert.equal(before.loads, 1)
+
+    // 同一份内容再 reload：只读状态，不 bump
+    const same = await host.reload('ok_one')
+    assert.equal(same.generation, before.generation)
+    assert.equal(same.loads, 1)
+
+    // 只改 mtime：内容 hash 不变，仍不 bump
+    const entry = join(dir, 'ok_one', 'index.mjs')
+    const later = new Date(Date.now() + 60_000)
+    utimesSync(entry, later, later)
+    const touched = await host.reload('ok_one')
+    assert.equal(touched.generation, before.generation)
+    assert.equal(touched.loads, 1)
+
+    // 真改代码（连 version 都不动）：换代一次，handler 变成新的
+    writeFileSync(entry, readFileSync(entry, 'utf8').replace('v2 body', 'v2 body changed'))
+    const changed = await host.reload('ok_one')
+    assert.equal(changed.generation, before.generation + 1)
+    assert.equal(changed.loads, 2)
+    const handler = registry.resolve('ok_one', 'content')!
+    const body = (await handler.handler({ params: {} } as never)) as { data: { content: string } }
+    assert.equal(body.data.content, 'v2 body changed')
+
+    // force=1 用于强制重试/重落声明：即使代码没变也换代
+    const forced = await host.reload('ok_one', { force: true })
+    assert.equal(forced.generation, before.generation + 2)
+    assert.equal(forced.loads, 3)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('并发 reload 同一个 code 只换代一次（watcher + 手动撞车）', async () => {
+  const dir = tmpPlugins()
+  try {
+    const { host } = makeHost(dir)
+    const before = (await host.scanSync()).find((i) => i.code === 'ok_one')!
+    const entry = join(dir, 'ok_one', 'index.mjs')
+    writeFileSync(entry, readFileSync(entry, 'utf8').replace('v2 body', 'v2 body changed'))
+
+    const [a, b] = await Promise.all([host.reload('ok_one'), host.reload('ok_one')])
+    assert.equal(a.generation, before.generation + 1)
+    assert.equal(b.generation, before.generation + 1)
+    assert.equal(b.loads, before.loads + 1)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('失败记录不 bump 世代；failed 源代码没变也能重试，成功才算一次加载', async () => {
+  const dir = tmpPlugins()
+  const v = join(dir, 'flaky_one')
+  mkdirSync(v, { recursive: true })
+  writeFileSync(
+    join(v, 'manifest.json'),
+    JSON.stringify({
+      sdk_version: '^2',
+      version: '1.0.0',
+      entry: './index.mjs',
+      params: { search: ['key'] },
+      meta: { code: 'flaky_one', display: 'F', category: 'fixture', actions: ['search'] },
+    }),
+  )
+  // 开关放在插件目录**外面**：插件内容不变，但第一次加载失败、第二次能成功
+  writeFileSync(
+    join(v, 'index.mjs'),
+    `import { existsSync } from 'node:fs'
+if (!existsSync(new URL('../.flaky-flag', import.meta.url))) throw new Error('flaky')
+export default (sdk) => ({ handlers: { search: async () => ({ bookList: [] }) } })
+`,
+  )
+  try {
+    const { host, registry } = makeHost(dir)
+    const gen0 = registry.generation
+    await assert.rejects(() => host.reload('flaky_one'), /flaky/)
+    assert.equal(registry.generation, gen0, '失败占位不换代')
+    assert.equal(host.info().find((i) => i.code === 'flaky_one')?.loads, 0)
+
+    writeFileSync(join(dir, '.flaky-flag'), 'ok')
+    const info = await host.reload('flaky_one')
+    assert.equal(info.state, 'active')
+    assert.equal(info.generation, gen0 + 1)
+    assert.equal(info.loads, 1)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

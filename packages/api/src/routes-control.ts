@@ -242,8 +242,11 @@ export function registerControlRoutes(app: FastifyInstance, deps: ControlDeps): 
   app.post('/admin/sources/:code/reload', async (req, reply) => {
     if (!(await adminOnly(req, reply, config, deps.stores))) return
     const { code } = req.params as { code: string }
+    const qs = req.query as { force?: string }
+    // force=1 跳过"代码没变就不换代"的短路，用于强制重试/重落声明
+    const force = ['1', 'true', 'yes', 'on'].includes(String(qs['force'] ?? '').toLowerCase())
     try {
-      return ok(await deps.host.reload(code))
+      return ok(await deps.host.reload(code, { force }))
     } catch (e) {
       reply.code(400).send(fail(config.errorCode, e instanceof Error ? e.message : String(e)))
     }
