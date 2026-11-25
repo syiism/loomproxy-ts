@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { SourceRegistry } from '../src/registry.ts'
 import { defineSource } from '../src/handler.ts'
+import { createFetchFacade } from '../src/fetch-facade.ts'
 import { stampSearchSource } from '../src/present.ts'
 import { observeCall, type NameCachePort, type ObserveDecl } from '../src/observe.ts'
 import { newSubject, withholdContent } from '@loomproxy/contract'
@@ -163,4 +164,16 @@ test('阅读记录：列表攒名字、正文按标识回填；关掉留存则�
   const url = newSubject()
   observeCall('demo', { itemId: 'https://x/c?bookId=b7&itemId=c7' }, { contentType: 'novel', data: { content: 'x' } }, url, { nameCache: cache })
   assert.equal(url.book_key, 'b7', '从章标识里拆出书标识（Go 的 BookIdentFromChapterKey 同口径）')
+})
+
+test('fetch facade：raw 把响应头原样交给源（bootstrap 读 Set-Cookie 用）', async () => {
+  const headers = { 'set-cookie': ['novel_browser_token=v1.123.abc; Path=/'], 'x-probe': ['ok'] }
+  const fake = {
+    fetchRaw: async () => ({ body: new TextEncoder().encode('ok'), status: 200, headers }),
+    fetchText: async () => 'ok',
+    fetchJson: async () => ({}),
+  } as unknown as import('@loomproxy/kernel').Upstream
+  const r = await createFetchFacade(fake).raw('https://example.test/')
+  assert.deepEqual(r.headers, headers)
+  assert.equal(new TextDecoder().decode(r.body), 'ok')
 })

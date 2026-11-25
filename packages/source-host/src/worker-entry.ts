@@ -6,7 +6,7 @@ import { ClientCanceled, UpstreamError } from '@loomproxy/contract'
 import { createPluginSdk } from '@loomproxy/source-kit'
 import type { BridgeFromWorker, BridgeRequest, BridgeError, FetchKind, FetchOpts } from './bridge.ts'
 import { serError } from './bridge.ts'
-import type { HandlerContext, PluginFactory, SourceDefinition } from '@loomproxy/source-kit'
+import type { FetchRawResult, HandlerContext, PluginFactory, SourceDefinition } from '@loomproxy/source-kit'
 
 const port = parentPort
 if (!port) throw new Error('worker-entry 必须在 worker_threads 里运行')
@@ -68,8 +68,7 @@ function ctx(action: string, params: Record<string, string>, settings: Record<st
   const fetch = {
     json: (url: string, opts?: FetchOpts) => rpc<unknown>({ t: 'fetch', kind: 'json', url, opts: opts ?? {} }),
     text: (url: string, opts?: FetchOpts) => rpc<string>({ t: 'fetch', kind: 'text', url, opts: opts ?? {} }),
-    raw: (url: string, opts?: FetchOpts) =>
-      rpc<{ body: Uint8Array; status: number }>({ t: 'fetch', kind: 'raw', url, opts: opts ?? {} }),
+    raw: (url: string, opts?: FetchOpts) => rpc<FetchRawResult>({ t: 'fetch', kind: 'raw', url, opts: opts ?? {} }),
   } satisfies Record<FetchKind, unknown>
   return {
     source: workerData.code as string,

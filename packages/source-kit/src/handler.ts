@@ -21,6 +21,10 @@ export interface SettingsReader {
   getInt(key: string, def: number): number
 }
 
+export type FetchHeaders = Record<string, string[]>
+
+export type FetchRawResult = { body: Uint8Array; status: number; headers: FetchHeaders }
+
 export type FetchOptions = {
   method?: string
   headers?: Record<string, string>
@@ -35,7 +39,8 @@ export type FetchOptions = {
 export interface FetchFacade {
   json(url: string, opts?: FetchOptions): Promise<unknown>
   text(url: string, opts?: FetchOptions): Promise<string>
-  raw(url: string, opts?: FetchOptions): Promise<{ body: Uint8Array; status: number }>
+  /** headers 可用来读 Set-Cookie 自举会话；只缓存 body，缓存命中时 headers 为空 */
+  raw(url: string, opts?: FetchOptions): Promise<FetchRawResult>
 }
 
 export type HandlerContext = {

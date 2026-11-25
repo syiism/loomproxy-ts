@@ -213,6 +213,12 @@ type ResponseFilter func(body []byte) bool   // 决定"这次响应能不能进�
 TS 对应：`undici` + `AbortSignal.timeout()`；`headersKey` 保持"排序后的 k=v 拼接"的同一种算法，
 否则双跑时缓存命中率对不上（对拍会把"缓存没命中"表现成"两次上游响应不同"）。
 
+**响应头（TS 扩展，2026-11-25）**：`FetchFacade.raw()` / `Upstream.fetchRaw()` 返回
+`{ body, status, headers }`，其中 `headers` 是 `Record<string, string[]>`（键小写，`set-cookie` 保留多值，
+用普通对象以便过 worker 桥）。上游靠 `Set-Cookie` 下发浏览器票据的源（如书海阁 `novel_browser_token`）
+先用 `raw()` 抓 bootstrap 页、读 token，再带 `Cookie` + `X-Browser-Token` 走 JSON 口。
+**只缓存 body**：缓存命中时 `headers` 为空，bootstrap 请求不要给 `cacheKey`，否则会把旧 token 当新的。
+
 ## 7. 号池（`base/pool/`）
 
 ```ts

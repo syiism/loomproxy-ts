@@ -6,6 +6,9 @@
   "params": {
     "search": [
       "key"
+    ],
+    "detail": [
+      "url"
     ]
   },
   "meta": {
@@ -15,7 +18,8 @@
     "sort_order": 20,
     "status": 1,
     "actions": [
-      "search"
+      "search",
+      "detail"
     ],
     "media_type": "novel"
   }

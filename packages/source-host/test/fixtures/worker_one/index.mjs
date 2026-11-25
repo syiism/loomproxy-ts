@@ -15,5 +15,10 @@ export default (sdk) => ({
         },
       ],
     }),
+    // 验证 worker 里的 ctx.fetch.raw 能把响应头（含 set-cookie）拿回来
+    detail: async (ctx) => {
+      const r = await ctx.fetch.raw(ctx.params.url ?? '')
+      return { bookList: [], headers: r.headers, body: new TextDecoder().decode(r.body) }
+    },
   },
 })

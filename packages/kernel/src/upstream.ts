@@ -10,6 +10,11 @@ import type { Logger } from './logger.ts'
 import { CircuitBreaker } from './circuit.ts'
 import { SingleFlight } from './singleflight.ts'
 
+/** 响应头：用普通对象过 worker 线（Headers 对象不可结构化克隆）；set-cookie 保留多值 */
+export type FetchHeaders = Record<string, string[]>
+
+export type FetchRawResult = { body: Uint8Array; status: number; headers: FetchHeaders }
+
 export type FetchOptions = {
   method?: string
   headers?: Record<string, string>
@@ -219,27 +224,35 @@ export class Upstream {
     }
   }
 
-  /** 原始字节 + 上游状态码（成败判定归调用方，对应 Go 的 FetchShared） */
+  /**
+   * 原始字节 + 状态码 + 响应头（成败判定归调用方，对应 Go 的 FetchShared）。
+   * 只缓存 body：缓存命中时 headers 为空——需要读 Set-Cookie 的 bootstrap 请求不要给 cacheKey，
+   * 否则会拿到过期 token 还以为拿到了新的。
+   */
   async fetchRaw(
     url: string,
     opts: FetchOptions & { cacheKey?: string; ttlMs?: number; cacheIf?: (body: Uint8Array) => boolean } = {},
-  ): Promise<{ body: Uint8Array; status: number }> {
+  ): Promise<FetchRawResult> {
     const signal = opts.signal ?? new AbortController().signal
     const key = opts.cacheKey
     if (key && this.cache && opts.ttlMs && opts.ttlMs > 0) {
       const hit = this.cache.get(key)
-      if (hit instanceof Uint8Array) return { body: hit, status: 200 }
+      if (hit instanceof Uint8Array) return { body: hit, status: 200, headers: {} }
     }
-    const run = async (): Promise<{ body: Uint8Array; status: number }> => {
+    const run = async (): Promise<FetchRawResult> => {
       const res = await this.perform(url, opts, signal, opts.scope)
       const body = new Uint8Array(await res.arrayBuffer())
       if (res.status >= 400) {
         throw new UpstreamError(res.status, `上游返回非 2xx: ${res.status}`, undefined)
       }
+      const headers: FetchHeaders = {}
+      for (const [name, value] of res.headers) headers[name.toLowerCase()] = [value]
+      const cookies = typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : []
+      if (cookies.length) headers['set-cookie'] = cookies
       if (key && this.cache && opts.ttlMs && (!opts.cacheIf || opts.cacheIf(body))) {
         this.cache.set(key, body)
       }
-      return { body, status: res.status }
+      return { body, status: res.status, headers }
     }
     return key ? this.flight.do(key, run) : run()
   }

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createServer } from 'node:http'
 import { loadConfig, silentLogger, Upstream } from '@loomproxy/kernel'
 import { SourceRegistry } from '@loomproxy/source-kit'
 import { InMemoryDataSources, InMemorySettings } from '@loomproxy/store'
@@ -308,6 +309,33 @@ test('世代与加载次数是两件事：generation 是全局序号（跨源单
     assert.equal(after.get('bad_manifest')!.generation, bad.generation)
     await host.dispose()
   } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('worker 桥：raw 的响应头（含多值 set-cookie）过线回到插件', async () => {
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { 'x-probe': 'yes', 'set-cookie': ['t=1; Path=/', 'u=2; Path=/'] })
+    res.end('body')
+  })
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
+  const address = server.address()
+  const url = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}/`
+  const dir = tmpPlugins(['worker_one'])
+  try {
+    const { host, registry } = makeHost(dir)
+    await host.scanSync()
+    const result = (await registry.get('worker_one')!.invoke!('detail' as never, { url } as never)) as {
+      headers: Record<string, string[]>
+      body: string
+    }
+    assert.equal(result.headers['x-probe']?.[0], 'yes')
+    assert.deepEqual(result.headers['set-cookie'], ['t=1; Path=/', 'u=2; Path=/'])
+    assert.equal(result.body, 'body')
+    await host.unload('worker_one')
+    await host.dispose()
+  } finally {
+    server.close()
     rmSync(dir, { recursive: true, force: true })
   }
 })

@@ -229,3 +229,35 @@ test('UA 轮换：UPSTREAM_UA_ROTATE 生效，且源显式给的 UA 优先', asy
     target.server.close()
   }
 })
+
+test('fetchRaw：响应头（含多值 set-cookie）透传；缓存命中不回放 cookie', async () => {
+  const server = createServer((_req, res) => {
+    res.writeHead(200, {
+      'content-type': 'text/plain',
+      'x-probe': 'v1',
+      'set-cookie': ['novel_browser_token=v1.123.abc; Path=/', 'device=d1; Path=/'],
+    })
+    res.end('hello')
+  })
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
+  const address = server.address()
+  const url = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}/`
+  const up = new Upstream({
+    config: loadConfig({ JWT_SECRET: 'x'.repeat(32) }),
+    logger: silentLogger(),
+    cache: new TtlCache({ maxEntries: 8, ttlMs: 60_000 }),
+  })
+  try {
+    const first = await up.fetchRaw(url, { cacheKey: 'bootstrap', ttlMs: 60_000 })
+    assert.equal(first.headers['x-probe']?.[0], 'v1')
+    assert.deepEqual(first.headers['set-cookie'], [
+      'novel_browser_token=v1.123.abc; Path=/',
+      'device=d1; Path=/',
+    ])
+    const second = await up.fetchRaw(url, { cacheKey: 'bootstrap', ttlMs: 60_000 })
+    assert.equal(new TextDecoder().decode(second.body), 'hello')
+    assert.deepEqual(second.headers, {}, '缓存里只放 body，不能把过期 token 当新的还给插件')
+  } finally {
+    server.close()
+  }
+})
