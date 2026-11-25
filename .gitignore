@@ -11,3 +11,6 @@ plugins/*/
 
 # 项目统一使用 pnpm，忽略 npm 生成的 lockfile
 package-lock.json
+
+# 本地工作笔记（含运维细节，不入库）
+WORKLOG.md
