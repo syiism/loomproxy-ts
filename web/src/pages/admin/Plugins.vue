@@ -2,7 +2,7 @@
   <div>
     <PageHeader
       title="源插件"
-      subtitle="插件源码位于 plugins/<源码>/（单版本，manifest 里带 version）；reload 换代、disable 翻状态、unload 摘注册。多版本由开发者在外部维护。"
+      subtitle="插件源码位于 plugins/<源码>/（单版本，manifest 里带 version）；reload 换代、disable/enable 翻状态、unload 摘注册后可再注册。多版本由开发者在外部维护。"
     />
 
     <div class="reveal flex flex-wrap items-center gap-4 mb-6">
@@ -70,11 +70,13 @@
             <td class="font-mono text-xs">{{ p.generation }}</td>
             <td class="font-mono text-xs text-text-muted">{{ p.loads ?? 0 }}</td>
             <td class="font-mono text-xs">{{ p.inflight }}</td>
-            <td>
-              <div class="flex flex-wrap gap-1.5">
-                <button class="btn-ghost btn-xs" :disabled="!!busy" @click="act(p.code, 'reloadPlugin')">reload</button>
-                <button class="btn-ghost btn-xs" :disabled="!!busy" @click="act(p.code, 'disablePlugin')">disable</button>
-                <button class="btn-ghost btn-xs" :disabled="!!busy" @click="act(p.code, 'unloadPlugin')">unload</button>
+            <td class="whitespace-nowrap">
+              <div class="flex items-center gap-1.5 text-xs" style="white-space: nowrap">
+                <template v-for="(op, i) in opsFor(p)" :key="op.method">
+                  <span v-if="i" class="text-border select-none">|</span>
+                  <button :disabled="!!busy" @click="act(p.code, op.method)"
+                    :class="op.danger ? 'text-pale-red-fg hover:opacity-70 transition-opacity' : 'text-text-muted hover:text-text transition-colors'">{{ op.label }}</button>
+                </template>
               </div>
             </td>
           </tr>
@@ -105,12 +107,31 @@ const autoRefresh = ref(true)
 let timer = null
 
 const stateTone = (s) => (s === 'active' ? 'green' : s === 'failed' ? 'red' : 'gray')
-const stateLabel = (s) => ({ active: '生效中', failed: '加载失败', disabled: '已禁用' }[s] || s)
+const stateLabel = (s) => ({ active: '生效中', failed: '加载失败', disabled: '已禁用', unloaded: '未注册' }[s] || s)
+
+// 与「用户管理」操作栏一致：文字按钮 + 竖线分隔，危险操作用红色。
+const opsFor = (p) => {
+  const ops = []
+  if (p.state === 'disabled') ops.push({ label: '启用', method: 'enablePlugin' })
+  if (p.state === 'unloaded') ops.push({ label: '注册', method: 'registerPlugin' })
+  else ops.push({ label: 'reload', method: 'reloadPlugin' })
+  if (p.state === 'active' || p.state === 'failed') ops.push({ label: '禁用', method: 'disablePlugin' })
+  if (p.state !== 'unloaded') ops.push({ label: 'unload', method: 'unloadPlugin', danger: true })
+  return ops
+}
 
 const load = async () => {
   loading.value = plugins.value.length === 0
   try {
-    plugins.value = await adminApi.listPlugins()
+    const [registered, available] = await Promise.all([adminApi.listPlugins(), adminApi.availablePlugins()])
+    // unload 只摘注册表、不删源码：把磁盘上还没注册的目录也列出来，给「注册」按钮一个入口
+    const known = new Set(registered.map((p) => p.code))
+    plugins.value = [
+      ...registered,
+      ...available.filter((code) => !known.has(code)).map((code) => ({
+        code, version: '—', state: 'unloaded', isolation: '—', generation: 0, loads: 0, inflight: 0,
+      })),
+    ]
     error.value = ''
   } catch (e) {
     error.value = e.message

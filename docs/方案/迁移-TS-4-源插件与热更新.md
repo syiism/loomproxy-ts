@@ -157,7 +157,7 @@ Go 版把声明位拆在三处（`init()` 注册 → `db.Init` 落行 → `OnBoo
 | 变更 | 状态 | 落点 |
 |---|---|---|
 | 新增 `GET /admin/sources/plugins`（code/version/state/isolation/generation/inflight/dir/last_error） | ✅ 已落地 | `packages/api/src/routes.ts`；面板「源插件」页 |
-| 新增 `POST /admin/sources/:code/{reload,disable,unload}` + `POST /admin/sources/reload-all` | ✅ 已落地 | 同上；面板逐行按钮 + 页头「全部 reload」 |
+| 新增 `POST /admin/sources/:code/{reload,disable,enable,unload,register}` + `POST /admin/sources/reload-all` | ✅ 已落地 | 同上；面板逐行按钮 + 页头「全部 reload」。`enable` 只翻状态；`unload` 只摘注册表不删源码，`register` 从磁盘重新加载；`GET /admin/sources/plugins/available` 列出磁盘上未注册的 code |
 | ~~`POST /admin/sources/install`（manifest/入口文本粘贴）~~ | SDK 2 已删除：manifest 与 index.mjs 都在 zip 里 |
 | 新增 `POST /admin/sources/install-package`（**上传插件包**：zip → 解包 → 同一条写盘/换代路径；包根或 `<code>/<version>/` 前缀都认） | ✅ 已落地（2026-11-18） | `source-host/src/{zip.ts,host.ts}` 的 `readZip()` / `installPackage()`；面板「源插件 → 插件包（.zip）」 |
 | 明细加 `plugin_version` 列（可按版本筛） | ✅ 已落地（TS 分支） | `contract/src/calls.ts` 的 `CallLogRow`、`store/src/call-logs.ts`、`api/src/calls.ts` 出口记账、`GET /admin/monitor/history?plugin_version=`、面板「调用明细」页 |

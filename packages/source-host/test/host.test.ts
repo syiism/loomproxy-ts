@@ -1,6 +1,6 @@
 import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, utimesSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer } from 'node:http'
@@ -158,6 +158,36 @@ test('卸载与禁用：禁用后派发 404，卸载后注册表没有它', asyn
     assert.equal(registry.resolve('ok_one', 'search'), undefined)
     await host.unload('ok_one')
     assert.equal(registry.get('ok_one'), undefined)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('禁用/启用与卸载/注册：unload 不删源码，注册从磁盘装回且只算一次加载', async () => {
+  const dir = tmpPlugins()
+  try {
+    const { host, registry } = makeHost(dir)
+    await host.scanSync()
+    const before = host.info().find((i) => i.code === 'ok_one')!
+
+    host.disable('ok_one')
+    assert.equal(registry.resolve('ok_one', 'content'), undefined)
+    assert.equal(host.info().find((i) => i.code === 'ok_one')?.state, 'disabled')
+    const enabled = host.enable('ok_one')
+    assert.equal(enabled.state, 'active')
+    assert.equal(enabled.generation, before.generation, '启用只翻状态，不换代')
+    assert.ok(registry.resolve('ok_one', 'content'))
+    assert.throws(() => host.enable('ok_one'), /只有已禁用/)
+
+    await host.unload('ok_one')
+    assert.equal(registry.get('ok_one'), undefined)
+    assert.ok(host.availableCodes().includes('ok_one'), '源码还在磁盘上，可以再注册')
+    assert.ok(existsSync(join(dir, 'ok_one', 'manifest.json')), 'unload 不删源码')
+
+    const registered = await host.reload('ok_one')
+    assert.equal(registered.state, 'active')
+    assert.equal(registered.loads, 1, 'unload 把 loads 清零，注册算一次真加载')
+    assert.ok(!host.availableCodes().includes('ok_one'))
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

@@ -467,6 +467,20 @@ export class SourceHost {
     this.registry.setState(code, 'disabled')
   }
 
+  /** 启用：只翻状态，不重新 import（与 disable 对称） */
+  enable(code: string): PluginInfo {
+    const cur = this.registry.get(code)
+    if (!cur) throw new Error(`插件 ${code} 未注册`)
+    if (cur.state !== 'disabled') throw new Error(`只有已禁用的插件可以启用：${code}`)
+    this.registry.setState(code, 'active')
+    return this.mustInfo(code)
+  }
+
+  /** 磁盘上有、但不在注册表里的 code（unload 之后靠「注册」装回来） */
+  availableCodes(): string[] {
+    return this.codeDirs().filter((code) => !this.registry.get(code))
+  }
+
   /** 卸载：摘注册表（等价 Go 版"摘导入 + 重启"，但不用重启） */
   async unload(code: string): Promise<void> {
     const cur = this.registry.get(code)

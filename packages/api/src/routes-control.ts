@@ -196,6 +196,12 @@ export function registerControlRoutes(app: FastifyInstance, deps: ControlDeps): 
     return ok(deps.host.info())
   })
 
+  // 磁盘上有、但已 unload 的插件：面板据此显示「未注册」行并提供「注册」按钮
+  app.get('/admin/sources/plugins/available', async (req, reply) => {
+    if (!(await adminOnly(req, reply, config, deps.stores))) return
+    return ok(deps.host.availableCodes())
+  })
+
   app.post('/admin/sources/reload-all', async (req, reply) => {
     if (!(await adminOnly(req, reply, config, deps.stores))) return
     const results = []
@@ -234,6 +240,27 @@ export function registerControlRoutes(app: FastifyInstance, deps: ControlDeps): 
     try {
       const info = await deps.host.installPackage({ bytes: new Uint8Array(bytes) })
       return ok(info)
+    } catch (e) {
+      reply.code(400).send(fail(config.errorCode, e instanceof Error ? e.message : String(e)))
+    }
+  })
+
+  app.post('/admin/sources/:code/enable', async (req, reply) => {
+    if (!(await adminOnly(req, reply, config, deps.stores))) return
+    const { code } = req.params as { code: string }
+    try {
+      return ok(deps.host.enable(code))
+    } catch (e) {
+      reply.code(400).send(fail(config.errorCode, e instanceof Error ? e.message : String(e)))
+    }
+  })
+
+  // 注册 = 从磁盘重新加载一个已 unload 的目录；内容与上次相同也不会 bump（注册表里没有它，必然真加载）
+  app.post('/admin/sources/:code/register', async (req, reply) => {
+    if (!(await adminOnly(req, reply, config, deps.stores))) return
+    const { code } = req.params as { code: string }
+    try {
+      return ok(await deps.host.reload(code))
     } catch (e) {
       reply.code(400).send(fail(config.errorCode, e instanceof Error ? e.message : String(e)))
     }

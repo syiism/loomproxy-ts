@@ -396,6 +396,39 @@ test('插件管理：要管理员；外部换目录 + reload 后 /datasources �
   }
 })
 
+test('插件管理：disable/enable 翻状态；unload 后可列出并重新注册', async () => {
+  const { app, root } = await makeApp()
+  const H = { authorization: `Bearer ${adminToken()}` }
+  try {
+    const disabled = await app.inject({ method: 'POST', url: '/admin/sources/demo_one/disable', headers: H })
+    assert.equal(disabled.statusCode, 200)
+    assert.equal((disabled.json() as { data: { state: string } }).data.state, 'disabled')
+
+    const enabled = await app.inject({ method: 'POST', url: '/admin/sources/demo_one/enable', headers: H })
+    assert.equal(enabled.statusCode, 200)
+    assert.equal((enabled.json() as { data: { state: string } }).data.state, 'active')
+
+    const unloaded = await app.inject({ method: 'POST', url: '/admin/sources/demo_one/unload', headers: H })
+    assert.equal(unloaded.statusCode, 200)
+    const available = await app.inject({ method: 'GET', url: '/admin/sources/plugins/available', headers: H })
+    assert.deepEqual((available.json() as { data: string[] }).data, ['demo_one'])
+
+    const registered = await app.inject({ method: 'POST', url: '/admin/sources/demo_one/register', headers: H })
+    assert.equal(registered.statusCode, 200)
+    assert.equal((registered.json() as { data: { state: string } }).data.state, 'active')
+    const after = await app.inject({ method: 'GET', url: '/admin/sources/plugins/available', headers: H })
+    assert.deepEqual((after.json() as { data: string[] }).data, [])
+
+    const denied = await app.inject({
+      method: 'POST', url: '/admin/sources/demo_one/enable', headers: { authorization: `Bearer ${userToken()}` },
+    })
+    assert.equal(denied.statusCode, 403)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('静态字典：/data/:source/:name 兼容带 .json 后缀的 URL', async () => {
   const { app, root } = await makeApp()
   try {

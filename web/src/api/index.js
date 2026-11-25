@@ -128,7 +128,10 @@ export const adminApi = {
     }),
   // 源插件（热更新，TS 分支新增；④ §7 批准的一整套管理端点）
   listPlugins: () => request('/admin/sources/plugins'),
+  availablePlugins: () => request('/admin/sources/plugins/available'),
   reloadPlugin: (code) => request('/admin/sources/' + code + '/reload', { method: 'POST' }),
+  enablePlugin: (code) => request('/admin/sources/' + code + '/enable', { method: 'POST' }),
+  registerPlugin: (code) => request('/admin/sources/' + code + '/register', { method: 'POST' }),
   disablePlugin: (code) => request('/admin/sources/' + code + '/disable', { method: 'POST' }),
   unloadPlugin: (code) => request('/admin/sources/' + code + '/unload', { method: 'POST' }),
   reloadAllPlugins: () => request('/admin/sources/reload-all', { method: 'POST' }),
