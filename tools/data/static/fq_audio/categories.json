@@ -1,0 +1,1337 @@
+{
+  "_note": "番茄听书分类树（fq-hg-mini FQ_TTS_CATEGORIES，222 项；tag/parent/id/name）。",
+  "categories": [
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "1",
+      "name": "都市"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "3",
+      "name": "现代言情"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "5",
+      "name": "古代言情"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "261",
+      "name": "都市日常"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "79",
+      "name": "年代"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "7",
+      "name": "玄幻"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "246",
+      "name": "宫斗宅斗"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "23",
+      "name": "种田"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "258",
+      "name": "传统玄幻"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "91",
+      "name": "多女主"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "12",
+      "name": "历史"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "262",
+      "name": "都市脑洞"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "124",
+      "name": "都市修真"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "27",
+      "name": "兵王"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "263",
+      "name": "都市种田"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "265",
+      "name": "先婚后爱"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "273",
+      "name": "历史古代"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "26",
+      "name": "神医"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "29",
+      "name": "豪门总裁"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "257",
+      "name": "玄幻脑洞"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "10",
+      "name": "悬疑"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "1016",
+      "name": "男频衍生"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "1140",
+      "name": "东方仙侠"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "533",
+      "name": "民俗秘闻"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "1014",
+      "name": "都市高武"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "37",
+      "name": "穿越"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "19",
+      "name": "系统"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "520",
+      "name": "大佬"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "259",
+      "name": "奇幻仙侠"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "30",
+      "name": "宠妻"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "248",
+      "name": "玄幻言情"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "253",
+      "name": "古言脑洞"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "267",
+      "name": "现言脑洞"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "272",
+      "name": "历史脑洞"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "504",
+      "name": "抗战谍战"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "8",
+      "name": "科幻末世"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "247",
+      "name": "医术"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "384",
+      "name": "无敌"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "727",
+      "name": "七零"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "453",
+      "name": "开局"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "86",
+      "name": "女强"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "94",
+      "name": "团宠"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "24",
+      "name": "快穿"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "723",
+      "name": "下山"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "36",
+      "name": "重生"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "718",
+      "name": "动漫衍生"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "584",
+      "name": "道士"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "746",
+      "name": "游戏体育"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "2",
+      "name": "都市生活"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "275",
+      "name": "双男主"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "119",
+      "name": "搞笑"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "32",
+      "name": "幻想言情"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "100",
+      "name": "灵异"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "90",
+      "name": "天才"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "28",
+      "name": "萌宝"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "597",
+      "name": "爽文"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "728",
+      "name": "八零"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "25",
+      "name": "赘婿"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "745",
+      "name": "星光璀璨"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "735",
+      "name": "凡人流"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "266",
+      "name": "马甲"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "125",
+      "name": "家庭"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "81",
+      "name": "盗墓"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "20",
+      "name": "神豪"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "391",
+      "name": "无女主"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "42",
+      "name": "奶爸"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "68",
+      "name": "末世"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "749",
+      "name": "青春甜宠"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "1015",
+      "name": "女频衍生"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "372",
+      "name": "网游"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "537",
+      "name": "惊悚游戏"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "269",
+      "name": "现言日常"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "80",
+      "name": "剑道"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "536",
+      "name": "刑侦探案"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "379",
+      "name": "求生"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "1139",
+      "name": "古风世情"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "57",
+      "name": "游戏动漫"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "369",
+      "name": "反派"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "74",
+      "name": "宠物"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "43",
+      "name": "娱乐圈"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "385",
+      "name": "校花"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "88",
+      "name": "嫡女"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "61",
+      "name": "推理"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "16",
+      "name": "武侠"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "1017",
+      "name": "民国言情"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "44",
+      "name": "空间"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "395",
+      "name": "现言甜宠"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "487",
+      "name": "医生"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "585",
+      "name": "女配"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "15",
+      "name": "体育"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "392",
+      "name": "无CP"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "725",
+      "name": "永生"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "82",
+      "name": "学霸"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "378",
+      "name": "女帝"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "96",
+      "name": "甜宠"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "1141",
+      "name": "西方奇幻"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "535",
+      "name": "鬼故事"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "4",
+      "name": "校园"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "39",
+      "name": "二次元"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "69",
+      "name": "直播"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "75",
+      "name": "外卖"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "592",
+      "name": "王爷"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "737",
+      "name": "大叔"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "83",
+      "name": "公主"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "590",
+      "name": "替嫁"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "17",
+      "name": "鉴宝"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "704",
+      "name": "双女主"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "388",
+      "name": "女扮男装"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "71",
+      "name": "诸天万界"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "70",
+      "name": "无限流"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "85",
+      "name": "王妃"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "77",
+      "name": "星际"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "375",
+      "name": "特种兵"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "734",
+      "name": "吞噬"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "591",
+      "name": "太子"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "72",
+      "name": "兽世"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "67",
+      "name": "三国"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "589",
+      "name": "法医"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "729",
+      "name": "捡漏"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "587",
+      "name": "村花"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "249",
+      "name": "古言萌宝"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "582",
+      "name": "丧尸"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "514",
+      "name": "灵气复苏"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "66",
+      "name": "洪荒"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "31",
+      "name": "其他"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "40",
+      "name": "海岛"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "516",
+      "name": "都市异能"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "724",
+      "name": "召唤"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "719",
+      "name": "天道"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "92",
+      "name": "腹黑"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "731",
+      "name": "封神"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "492",
+      "name": "将军"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "382",
+      "name": "穿书"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "45",
+      "name": "影视小说"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "368",
+      "name": "火影"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "444",
+      "name": "影视原声"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "383",
+      "name": "九叔"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "390",
+      "name": "民国"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "507",
+      "name": "谍战"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "394",
+      "name": "古言甜宠"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "76",
+      "name": "清穿"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "588",
+      "name": "地府"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "613",
+      "name": "御兽"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "367",
+      "name": "奥特同人"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "380",
+      "name": "病娇"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "78",
+      "name": "美食"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "381",
+      "name": "聊天群"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "376",
+      "name": "龙珠"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "89",
+      "name": "精灵"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "95",
+      "name": "虐文"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "387",
+      "name": "青梅竹马"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "84",
+      "name": "皇后"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "518",
+      "name": "特工"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "374",
+      "name": "漫威"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "373",
+      "name": "西游"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "498",
+      "name": "皇帝"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "73",
+      "name": "大唐"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "127",
+      "name": "职场"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "557",
+      "name": "逃荒"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "466",
+      "name": "闪婚"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "493",
+      "name": "钓鱼"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "126",
+      "name": "明朝"
+    },
+    {
+      "tag": "novel",
+      "parent": "小说",
+      "id": "377",
+      "name": "大秦"
+    },
+    {
+      "tag": "opera",
+      "parent": "相声评书",
+      "id": "110",
+      "name": "评书"
+    },
+    {
+      "tag": "opera",
+      "parent": "相声评书",
+      "id": "201",
+      "name": "单田芳"
+    },
+    {
+      "tag": "opera",
+      "parent": "相声评书",
+      "id": "202",
+      "name": "刘兰芳"
+    },
+    {
+      "tag": "opera",
+      "parent": "相声评书",
+      "id": "111",
+      "name": "相声"
+    },
+    {
+      "tag": "opera",
+      "parent": "相声评书",
+      "id": "204",
+      "name": "袁阔成"
+    },
+    {
+      "tag": "opera",
+      "parent": "相声评书",
+      "id": "203",
+      "name": "田连元"
+    },
+    {
+      "tag": "opera",
+      "parent": "相声评书",
+      "id": "114",
+      "name": "小品"
+    },
+    {
+      "tag": "history",
+      "parent": "历史",
+      "id": "207",
+      "name": "名人传"
+    },
+    {
+      "tag": "history",
+      "parent": "历史",
+      "id": "213",
+      "name": "近现代"
+    },
+    {
+      "tag": "history",
+      "parent": "历史",
+      "id": "212",
+      "name": "中国史"
+    },
+    {
+      "tag": "history",
+      "parent": "历史",
+      "id": "206",
+      "name": "战争史"
+    },
+    {
+      "tag": "history",
+      "parent": "历史",
+      "id": "211",
+      "name": "明清"
+    },
+    {
+      "tag": "history",
+      "parent": "历史",
+      "id": "356",
+      "name": "其他历史"
+    },
+    {
+      "tag": "history",
+      "parent": "历史",
+      "id": "210",
+      "name": "唐宋"
+    },
+    {
+      "tag": "history",
+      "parent": "历史",
+      "id": "209",
+      "name": "魏晋南北朝"
+    },
+    {
+      "tag": "history",
+      "parent": "历史",
+      "id": "208",
+      "name": "秦汉"
+    },
+    {
+      "tag": "history",
+      "parent": "历史",
+      "id": "214",
+      "name": "世界史"
+    },
+    {
+      "tag": "culture",
+      "parent": "文化",
+      "id": "562",
+      "name": "大案纪实"
+    },
+    {
+      "tag": "culture",
+      "parent": "文化",
+      "id": "116",
+      "name": "国学"
+    },
+    {
+      "tag": "culture",
+      "parent": "文化",
+      "id": "118",
+      "name": "文化"
+    },
+    {
+      "tag": "culture",
+      "parent": "文化",
+      "id": "132",
+      "name": "名著解读"
+    },
+    {
+      "tag": "culture",
+      "parent": "文化",
+      "id": "115",
+      "name": "佛学"
+    },
+    {
+      "tag": "culture",
+      "parent": "文化",
+      "id": "353",
+      "name": "民间故事"
+    },
+    {
+      "tag": "culture",
+      "parent": "文化",
+      "id": "237",
+      "name": "社科"
+    },
+    {
+      "tag": "culture",
+      "parent": "文化",
+      "id": "133",
+      "name": "纪录"
+    },
+    {
+      "tag": "culture",
+      "parent": "文化",
+      "id": "236",
+      "name": "散文戏剧"
+    },
+    {
+      "tag": "culture",
+      "parent": "文化",
+      "id": "135",
+      "name": "哲学"
+    },
+    {
+      "tag": "culture",
+      "parent": "文化",
+      "id": "354",
+      "name": "其他人文"
+    },
+    {
+      "tag": "culture",
+      "parent": "文化",
+      "id": "352",
+      "name": "读书书评"
+    },
+    {
+      "tag": "culture",
+      "parent": "文化",
+      "id": "136",
+      "name": "自然科学"
+    },
+    {
+      "tag": "culture",
+      "parent": "文化",
+      "id": "134",
+      "name": "艺术"
+    },
+    {
+      "tag": "study",
+      "parent": "学习成长",
+      "id": "239",
+      "name": "励志成功"
+    },
+    {
+      "tag": "study",
+      "parent": "学习成长",
+      "id": "144",
+      "name": "沟通表达"
+    },
+    {
+      "tag": "study",
+      "parent": "学习成长",
+      "id": "335",
+      "name": "未解谜团"
+    },
+    {
+      "tag": "study",
+      "parent": "学习成长",
+      "id": "143",
+      "name": "投资理财"
+    },
+    {
+      "tag": "study",
+      "parent": "学习成长",
+      "id": "147",
+      "name": "考试培训"
+    },
+    {
+      "tag": "study",
+      "parent": "学习成长",
+      "id": "145",
+      "name": "职业职场"
+    },
+    {
+      "tag": "study",
+      "parent": "学习成长",
+      "id": "153",
+      "name": "中考"
+    },
+    {
+      "tag": "study",
+      "parent": "学习成长",
+      "id": "238",
+      "name": "经管商业"
+    },
+    {
+      "tag": "study",
+      "parent": "学习成长",
+      "id": "146",
+      "name": "心理"
+    },
+    {
+      "tag": "study",
+      "parent": "学习成长",
+      "id": "142",
+      "name": "法律"
+    },
+    {
+      "tag": "study",
+      "parent": "学习成长",
+      "id": "154",
+      "name": "小升初"
+    },
+    {
+      "tag": "study",
+      "parent": "学习成长",
+      "id": "341",
+      "name": "其他成长"
+    },
+    {
+      "tag": "emotion",
+      "parent": "情感",
+      "id": "229",
+      "name": "情感故事"
+    },
+    {
+      "tag": "emotion",
+      "parent": "情感",
+      "id": "234",
+      "name": "婚姻"
+    },
+    {
+      "tag": "emotion",
+      "parent": "情感",
+      "id": "233",
+      "name": "心理健康"
+    },
+    {
+      "tag": "emotion",
+      "parent": "情感",
+      "id": "232",
+      "name": "夜话"
+    },
+    {
+      "tag": "emotion",
+      "parent": "情感",
+      "id": "231",
+      "name": "女性"
+    },
+    {
+      "tag": "emotion",
+      "parent": "情感",
+      "id": "230",
+      "name": "美文"
+    },
+    {
+      "tag": "parentage",
+      "parent": "亲子",
+      "id": "220",
+      "name": "儿童文学"
+    },
+    {
+      "tag": "parentage",
+      "parent": "亲子",
+      "id": "225",
+      "name": "胎教早教"
+    },
+    {
+      "tag": "parentage",
+      "parent": "亲子",
+      "id": "365",
+      "name": "其他亲子"
+    },
+    {
+      "tag": "parentage",
+      "parent": "亲子",
+      "id": "223",
+      "name": "科普"
+    },
+    {
+      "tag": "parentage",
+      "parent": "亲子",
+      "id": "224",
+      "name": "国学历史"
+    },
+    {
+      "tag": "parentage",
+      "parent": "亲子",
+      "id": "130",
+      "name": "儿童歌曲"
+    },
+    {
+      "tag": "parentage",
+      "parent": "亲子",
+      "id": "131",
+      "name": "儿童成长"
+    },
+    {
+      "tag": "parentage",
+      "parent": "亲子",
+      "id": "222",
+      "name": "儿童英语"
+    },
+    {
+      "tag": "parentage",
+      "parent": "亲子",
+      "id": "228",
+      "name": "亲子健康"
+    },
+    {
+      "tag": "parentage",
+      "parent": "亲子",
+      "id": "227",
+      "name": "孕产健康"
+    }
+  ]
+}
