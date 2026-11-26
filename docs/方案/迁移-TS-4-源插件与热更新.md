@@ -116,6 +116,13 @@ reload(code, force?):
 管理端点 `POST /admin/sources/:code/reload?force=1` 可跳过第 0 步短路（强制重试/重落声明）；
 普通面板按钮不带该参数。
 
+**视频取流（短剧 / 漫剧）**：`fq_drama` / `fq_manju` 的 CENC 解析优先走 anonymous V5：
+`api5-normal-sinfonlinea.fqnovel.com/novel/player/multi_video_model/player/v1/` + `dr_scene=player`
++ gzip body + V5 全签名信封（协议常量在 `protocol/sign/v5-{anon,tables}.mjs`，移植自 GPL-3.0
+的 novel-sound），身份取当前设备会话的 `device_id/iid/cdid`，**不需要 x-tt-token**；失败才退回旧的
+`sinfonlinec + preload` 路径。新响应无 `key_seed`：`main_url` 可直接下载，key 从
+`encrypt_info.spade_a` 解出。改这条链路必须 bump 插件版本。
+
 **回退（SDK 2）**：服务没有 rollback 端点。开发者/发布系统用旧版本目录替换 `plugins/<code>/`，
 再调 `POST /admin/sources/:code/reload`；在飞请求仍由老代 handler 服务到 drain 结束。
 
