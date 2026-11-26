@@ -17,9 +17,9 @@ type FileInfo = {
 }
 
 function categoryOf(source: string, filename: string): string {
-  if (filename === 'bookSource.json' || filename.startsWith('bookSource.bak')) return 'legado 书源'
-  if (filename === 'version.json' || filename.startsWith('version.bak')) return '版本日志'
   if (filename.includes('.bak-')) return '备份'
+  if (filename === 'bookSource.json') return 'legado 书源'
+  if (filename === 'version.json') return '版本日志'
   if (/(cats|ranks|tags|category)/i.test(filename)) return '分类静态数据'
   if (RETIRED_SOURCES.has(source)) return '退役源文件'
   return '其他'
