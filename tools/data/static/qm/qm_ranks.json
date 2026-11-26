@@ -1,0 +1,155 @@
+{
+  "_note": "七猫小说发现页字典（榜单 rank_type × tab_type、分类 category_id）。来源：本地书源 rules/exploreUrl.js 的硬编码标识，见 docs/数据源/方案-数据源接入-qimao与shuqi.md §6。出版频道(book-store 的 part 语义)未核实，v1 不收录。",
+  "ranks": [
+    {
+      "kind": "rank",
+      "name": "男频·推荐榜",
+      "id": "rec_list",
+      "tab": "1"
+    },
+    {
+      "kind": "rank",
+      "name": "女频·推荐榜",
+      "id": "rec_list",
+      "tab": "2"
+    },
+    {
+      "kind": "rank",
+      "name": "男频·热读榜",
+      "id": "hot_list",
+      "tab": "1"
+    },
+    {
+      "kind": "rank",
+      "name": "女频·热读榜",
+      "id": "hot_list",
+      "tab": "2"
+    },
+    {
+      "kind": "rank",
+      "name": "男频·新书榜",
+      "id": "new_list",
+      "tab": "1"
+    },
+    {
+      "kind": "rank",
+      "name": "女频·新书榜",
+      "id": "new_list",
+      "tab": "2"
+    },
+    {
+      "kind": "rank",
+      "name": "男频·完结榜",
+      "id": "end_list",
+      "tab": "1"
+    },
+    {
+      "kind": "rank",
+      "name": "女频·完结榜",
+      "id": "end_list",
+      "tab": "2"
+    },
+    {
+      "kind": "rank",
+      "name": "男频·飙升榜",
+      "id": "up_list",
+      "tab": "1"
+    },
+    {
+      "kind": "rank",
+      "name": "女频·飙升榜",
+      "id": "up_list",
+      "tab": "2"
+    },
+    {
+      "kind": "rank",
+      "name": "男频·好评榜",
+      "id": "good_comment_list",
+      "tab": "1"
+    },
+    {
+      "kind": "rank",
+      "name": "女频·好评榜",
+      "id": "good_comment_list",
+      "tab": "2"
+    },
+    {
+      "kind": "rank",
+      "name": "男频·热搜榜",
+      "id": "hot_search_list",
+      "tab": "1"
+    },
+    {
+      "kind": "rank",
+      "name": "女频·热搜榜",
+      "id": "hot_search_list",
+      "tab": "2"
+    },
+    {
+      "kind": "rank",
+      "name": "男频·必读榜",
+      "id": "must_read_list",
+      "tab": "1"
+    },
+    {
+      "kind": "rank",
+      "name": "女频·必读榜",
+      "id": "must_read_list",
+      "tab": "2"
+    },
+    {
+      "kind": "rank",
+      "name": "男频·畅销榜",
+      "id": "reward_value_list",
+      "tab": "1"
+    },
+    {
+      "kind": "rank",
+      "name": "女频·畅销榜",
+      "id": "reward_value_list",
+      "tab": "2"
+    }
+  ],
+  "categories": [
+    {
+      "kind": "category",
+      "name": "现代言情",
+      "id": "1"
+    },
+    {
+      "kind": "category",
+      "name": "古代言情",
+      "id": "2"
+    },
+    {
+      "kind": "category",
+      "name": "幻想言情",
+      "id": "4"
+    },
+    {
+      "kind": "category",
+      "name": "玄幻奇幻",
+      "id": "202"
+    },
+    {
+      "kind": "category",
+      "name": "都市人生",
+      "id": "203"
+    },
+    {
+      "kind": "category",
+      "name": "武侠仙侠",
+      "id": "205"
+    },
+    {
+      "kind": "category",
+      "name": "历史",
+      "id": "56"
+    },
+    {
+      "kind": "category",
+      "name": "科幻",
+      "id": "64"
+    }
+  ]
+}

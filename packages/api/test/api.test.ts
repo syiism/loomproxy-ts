@@ -429,6 +429,68 @@ test('插件管理：disable/enable 翻状态；unload 后可列出并重新注�
   }
 })
 
+test('静态文件管理：管理员可列/读写/删，非法路径与非管理员被拦', async () => {
+  const { app, root } = await makeApp()
+  const H = { authorization: `Bearer ${adminToken()}` }
+  try {
+    const put = await app.inject({
+      method: 'PUT', url: '/admin/static-files/shuyuan/bookSource.json', headers: H,
+      payload: { content: '{"bookSource":[]}' },
+    })
+    assert.equal(put.statusCode, 200)
+
+    const list = await app.inject({ method: 'GET', url: '/admin/static-files', headers: H })
+    const data = (list.json() as { data: {
+      sources: Array<{ source: string; files: Array<{ filename: string }> }>
+      known_sources: Array<{ code: string; has_dir: boolean }>
+    } }).data
+    assert.ok(data.sources.some((s) => s.source === 'shuyuan' && s.files.some((f) => f.filename === 'bookSource.json')))
+    assert.ok(data.known_sources.some((s) => s.code === 'demo_one' && !s.has_dir))
+
+    // 已登记但没有静态目录的源：直接给 data/<source>/ 建目录并改名
+    const made = await app.inject({
+      method: 'POST', url: '/admin/static-files/rename-source', headers: H,
+      payload: { from: 'demo_one', to: 'demo_static' },
+    })
+    assert.equal(made.statusCode, 200)
+    const withDir = await app.inject({ method: 'GET', url: '/admin/static-files', headers: H })
+    assert.ok((withDir.json() as { data: { sources: Array<{ source: string }> } }).data.sources.some((s) => s.source === 'demo_static'))
+
+    const one = await app.inject({ method: 'GET', url: '/admin/static-files/shuyuan/bookSource.json', headers: H })
+    assert.equal((one.json() as { data: { content: string } }).data.content, '{"bookSource":[]}')
+
+    const moved = await app.inject({
+      method: 'POST', url: '/admin/static-files/move', headers: H,
+      payload: { fromSource: 'shuyuan', fromName: 'bookSource.json', toSource: 'shuyuan', toName: 'bookSource.new.json' },
+    })
+    assert.equal(moved.statusCode, 200)
+    assert.equal((await app.inject({ method: 'GET', url: '/admin/static-files/shuyuan/bookSource.json', headers: H })).statusCode, 404)
+    const renamed = await app.inject({ method: 'GET', url: '/admin/static-files/shuyuan/bookSource.new.json', headers: H })
+    assert.equal((renamed.json() as { data: { content: string } }).data.content, '{"bookSource":[]}')
+
+    const denied = await app.inject({
+      method: 'PUT', url: '/admin/static-files/shuyuan/bookSource.json',
+      headers: { authorization: `Bearer ${userToken()}` }, payload: { content: 'x' },
+    })
+    assert.equal(denied.statusCode, 403)
+
+    const badPath = await app.inject({
+      method: 'PUT', url: '/admin/static-files/shuyuan/%2E%2E%2Fsecret.json', headers: H, payload: { content: 'x' },
+    })
+    assert.equal(badPath.statusCode, 400)
+    const runtime = await app.inject({ method: 'GET', url: '/admin/static-files/_runtime/fq-sessions.json', headers: H })
+    assert.equal(runtime.statusCode, 400)
+
+    const del = await app.inject({ method: 'DELETE', url: '/admin/static-files/shuyuan/bookSource.new.json', headers: H })
+    assert.equal(del.statusCode, 200)
+    const after = await app.inject({ method: 'GET', url: '/admin/static-files/shuyuan/bookSource.json', headers: H })
+    assert.equal(after.statusCode, 404)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('静态字典：/data/:source/:name 兼容带 .json 后缀的 URL', async () => {
   const { app, root } = await makeApp()
   try {

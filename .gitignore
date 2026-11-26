@@ -17,3 +17,8 @@ WORKLOG.md
 
 # 本地工作日志（按日期）
 .worklog/
+
+# 静态字典正本是源码数据，不能被通用的 data/ 规则忽略
+!tools/data/
+!tools/data/static/
+!tools/data/static/**

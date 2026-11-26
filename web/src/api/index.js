@@ -146,6 +146,13 @@ export const adminApi = {
   revokeRedeemCode: (id) => request('/admin/redeem-codes/' + id + '/revoke', { method: 'POST' }),
   revokeRedeemCodes: (ids) => request('/admin/redeem-codes/revoke-selected', { method: 'POST', body: { ids } }),
   revokeRedeemBatch: (batchNo) => request('/admin/redeem-codes/batch/' + batchNo, { method: 'DELETE' }),
+  // 静态文件管理（DATA_DIR/<source>/：分类字典 / legado 书源 / 版本日志等）
+  listStaticFiles: () => request('/admin/static-files'),
+  getStaticFile: (source, name) => request('/admin/static-files/' + encodeURIComponent(source) + '/' + encodeURIComponent(name)),
+  saveStaticFile: (source, name, content) => request('/admin/static-files/' + encodeURIComponent(source) + '/' + encodeURIComponent(name), { method: 'PUT', body: { content } }),
+  moveStaticFile: (fromSource, fromName, toSource, toName) => request('/admin/static-files/move', { method: 'POST', body: { fromSource, fromName, toSource, toName } }),
+  renameStaticSource: (from, to) => request('/admin/static-files/rename-source', { method: 'POST', body: { from, to } }),
+  deleteStaticFile: (source, name) => request('/admin/static-files/' + encodeURIComponent(source) + '/' + encodeURIComponent(name), { method: 'DELETE' }),
   // 数据源默认地址
   listSourceConfigs: () => request('/admin/source-configs'),
   updateSourceConfigs: (configs) => request('/admin/source-configs', { method: 'PUT', body: { configs } }),

@@ -9,7 +9,9 @@
     "node": ">=24.0.0"
   },
   "scripts": {
-    "check": "pnpm run check:layers && pnpm run check:types && pnpm run check:web && pnpm run check:web-contract && pnpm run test",
+    "check": "pnpm run check:layers && pnpm run check:dicts && pnpm run check:types && pnpm run check:web && pnpm run check:web-contract && pnpm run test",
+    "check:dicts": "node tools/gen-static-dicts.mjs --check",
+    "gen:dicts": "node tools/gen-static-dicts.mjs",
     "check:layers": "node tools/check-layers.mjs",
     "check:types": "tsc -p tsconfig.json",
     "test": "node --test \"packages/*/test/*.test.ts\" \"plugins/*/test/*.test.ts\" \"packages/pool/test/*.test.ts\" \"apps/*/test/*.test.ts\"",

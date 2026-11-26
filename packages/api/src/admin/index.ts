@@ -12,6 +12,7 @@ import { registerQuotaRoutes } from './quota.ts'
 import { registerSourceRoutes } from './source.ts'
 import { registerMonitorRoutes } from './monitor.ts'
 import { registerSettingsRoutes } from './settings.ts'
+import { registerStaticFileRoutes } from './static-files.ts'
 
 export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
   const { config } = deps
@@ -29,6 +30,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: Deps): void {
   registerSourceRoutes(app, ctx)
   registerMonitorRoutes(app, ctx)
   registerSettingsRoutes(app, ctx)
+  registerStaticFileRoutes(app, ctx)
 
   // ---- 明确未接的域（面板有页、后端没有） ----
   const stubs: Array<[string, string, string]> = [

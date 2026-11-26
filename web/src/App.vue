@@ -211,6 +211,7 @@ const iconMap = {
   '/admin/interfaces': 'code',
   // 源插件（热更新）：用 plug 图标——这个入口管的是"插上/拔掉一个源"
   '/admin/plugins': 'plug',
+  '/admin/static-files': 'folder',
   '/admin/usage-logs': 'list',
   '/admin/redeem-codes': 'ticket',
   '/admin/monitor': 'activity',
@@ -252,6 +253,7 @@ const adminNavGroups = [
     { to: '/admin/interfaces', label: '接口' },
     // 热更新入口：加源/换源/回滚都不重启进程（迁移-TS-4 §7）
     { to: '/admin/plugins', label: '源插件' },
+    { to: '/admin/static-files', label: '静态文件' },
   ] },
   { label: '运维', items: [
     { to: '/admin/usage-logs', label: '用量流水' },

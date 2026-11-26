@@ -31,7 +31,7 @@ packages/source-host L3 插件宿主：扫描 / manifest 校验 / 换代 / drain
 packages/api        L4′ Fastify 装配：控制面路由 + /:source/:action 派发
 plugins/<code>/       L4 源码即插件：manifest（含 version）+ src + test，SDK 由宿主注入
 apps/server         L5  进程入口（compose → listen → 停机），装配顺序的唯一出处
-web                 —  **原 Go 项目面板原样搬入**（Vue3 + Vite，7814 行），只补了「源插件」一页与
+web                 —  **原 Go 项目面板原样搬入**（Vue3 + Vite），只补了「源插件」「静态文件」两页与
                       api 方法、monitor 的 plugin_version 筛选；产物 web/dist 由 server 托管
 ```
 
@@ -61,6 +61,7 @@ node tools/plugin-run.mjs fq_novel content bookId=6983938353934634020 itemId=747
 # 面板
 pnpm run check:web     # 构建面板（等价 pnpm -F @loomproxy/web build）
 pnpm run dev:web       # 面板开发态（:5174，接口代理到 :8081）
+pnpm run gen:dicts     # 从 tools/data/static/ 字典正本生成 qm_novel 的栏目表（check 内含对拍）
 ```
 
 Node 24 直接跑 `.ts`（type stripping），所以**用例不需要构建**；这也约束了写法：
@@ -77,7 +78,7 @@ Node 24 直接跑 `.ts`（type stripping），所以**用例不需要构建**；
 | 访问判定六档（顺序与 Go 一致）、双维限流、计费去重窗口 | ✅ `packages/gate` |
 | `/`、`/datasources`、`/data*`、`/endpoints`、`/announcement`、`/admin/sources/*`、`/:source/:action` | ✅ `packages/api` |
 | 插件目录 `fs.watch` → 只 reload 变动源（**不重启进程**） | ✅ `apps/server` |
-| 面板：原 Go 面板全量搬入 + 「源插件」新页；登录/用户/角色/设置/数据源/监控/明细 已接真库 | ✅ `web` |
+| 面板：原 Go 面板全量搬入 + 「源插件」「静态文件」两页；登录/用户/角色/设置/数据源/监控/明细 已接真库 | ✅ `web` |
 | 调用明细 `plugin_version` 列（④ §7 批准的那一格） | ✅ 出口 hook 记账 + `/admin/monitor/history` |
 | 源包实现 | ✅ 17 个源插件（SDK 2：源码即插件，单版本部署）；番茄 5 形态由 fq-hg-mini 派生，hg_drama 退役 |
 | **号池运行时** | ✅ `packages/pool`（墙钟/摊薄两形态、冷热/耗尽/死号/冷却、维护协程、快照脱敏）；fq_novel 的会话池已接入（spread 型，建号走 device_register，取号写 pinned 会话） |

@@ -165,7 +165,7 @@ export function registerControlRoutes(app: FastifyInstance, deps: ControlDeps): 
       const sources: Record<string, { file_count: number; files: unknown[] }> = {}
       if (existsSync(root)) {
         for (const d of readdirSync(root, { withFileTypes: true })) {
-          if (!d.isDirectory()) continue
+          if (!d.isDirectory() || d.name.startsWith('_')) continue // _runtime / _archive 是运行状态与归档，不是静态字典
           const files = fileInfos(root, d.name)
           sources[d.name] = { file_count: files.length, files }
         }

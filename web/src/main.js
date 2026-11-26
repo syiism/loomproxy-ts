@@ -22,6 +22,7 @@ import AdminDevices from './pages/admin/Devices.vue'
 import AdminRedeemCodes from './pages/admin/RedeemCodes.vue'
 import AdminInterfaces from './pages/admin/Interfaces.vue'
 import AdminPlugins from './pages/admin/Plugins.vue'
+import AdminStaticFiles from './pages/admin/StaticFiles.vue'
 import NotFound from './pages/NotFound.vue'
 import { session, initSession, isAdmin } from './store.js'
 import { toast } from './utils.js'
@@ -44,6 +45,7 @@ const routes = [
   { path: '/admin/datasources', component: AdminDatasources, meta: { admin: true } },
   { path: '/admin/interfaces', component: AdminInterfaces, meta: { admin: true } },
   { path: '/admin/plugins', component: AdminPlugins, meta: { admin: true } },
+  { path: '/admin/static-files', component: AdminStaticFiles, meta: { admin: true } },
   { path: '/admin/usage-logs', component: AdminUsageLogs, meta: { admin: true } },
   { path: '/admin/monitor', component: AdminMonitor, meta: { admin: true } },
   { path: '/admin/pools', component: AdminPools, meta: { admin: true } },

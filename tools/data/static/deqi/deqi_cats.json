@@ -1,0 +1,21 @@
+[
+  { "name": "阅读排行", "path": "/top.html", "suffix": "" },
+  { "name": "玄幻小说", "path": "/sort/1/", "suffix": ".html" },
+  { "name": "仙侠小说", "path": "/sort/2/", "suffix": ".html" },
+  { "name": "都市小说", "path": "/sort/3/", "suffix": ".html" },
+  { "name": "历史小说", "path": "/sort/4/", "suffix": ".html" },
+  { "name": "军事小说", "path": "/sort/5/", "suffix": ".html" },
+  { "name": "科幻小说", "path": "/sort/6/", "suffix": ".html" },
+  { "name": "言情小说", "path": "/sort/7/", "suffix": ".html" },
+  { "name": "轻小说", "path": "/sort/8/", "suffix": ".html" },
+  { "name": "诸天无限", "path": "/sort/9/", "suffix": ".html" },
+  { "name": "游戏小说", "path": "/sort/10/", "suffix": ".html" },
+  { "name": "奇幻小说", "path": "/sort/11/", "suffix": ".html" },
+  { "name": "悬疑小说", "path": "/sort/12/", "suffix": ".html" },
+  { "name": "体育小说", "path": "/sort/13/", "suffix": ".html" },
+  { "name": "官场小说", "path": "/sort/14/", "suffix": ".html" },
+  { "name": "武侠小说", "path": "/sort/15/", "suffix": ".html" },
+  { "name": "现实小说", "path": "/sort/16/", "suffix": ".html" },
+  { "name": "完结小说", "path": "/quanben/", "suffix": ".html" },
+  { "name": "最新更新", "path": "/top/lastupdate/", "suffix": ".html" }
+]

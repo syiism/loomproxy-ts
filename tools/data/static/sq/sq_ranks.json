@@ -1,0 +1,49 @@
+{
+  "_note": "书旗小说发现页字典（书源项目口径）：榜单 = App bookrank/details 的 11 个 ruleId（男女频同表）。分类**不内嵌**——聚合书源运行时从栏目表 allitems 拉取（itemKey==CATEGORY），上游改版无需重发字典；网关 category 形状：cat/<id>/<group>、rank/<ruleId>/<group>。",
+  "ranks": [
+    {
+      "ruleId": "8",
+      "name": "金榜"
+    },
+    {
+      "ruleId": "51",
+      "name": "会员榜"
+    },
+    {
+      "ruleId": "48",
+      "name": "新书榜"
+    },
+    {
+      "ruleId": "59",
+      "name": "大神榜"
+    },
+    {
+      "ruleId": "60",
+      "name": "脑洞榜"
+    },
+    {
+      "ruleId": "1",
+      "name": "热门榜"
+    },
+    {
+      "ruleId": "2",
+      "name": "推荐榜"
+    },
+    {
+      "ruleId": "4",
+      "name": "完结榜"
+    },
+    {
+      "ruleId": "5",
+      "name": "高分榜"
+    },
+    {
+      "ruleId": "6",
+      "name": "热搜榜"
+    },
+    {
+      "ruleId": "61",
+      "name": "精选榜"
+    }
+  ]
+}
