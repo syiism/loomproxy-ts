@@ -154,6 +154,32 @@ test('健康检查是裸对象（不是信封），挂在 /health；/ 归面板'
   }
 })
 
+test('CORS：任意 Origin 回显并允许 Cookie，OPTIONS 预检直接 204', async () => {
+  const { app, root } = await makeApp()
+  try {
+    const get = await app.inject({ method: 'GET', url: '/health', headers: { origin: 'https://example.com' } })
+    assert.equal(get.headers['access-control-allow-origin'], 'https://example.com')
+    assert.equal(get.headers['access-control-allow-credentials'], 'true')
+    assert.equal(get.headers['vary'], 'Origin')
+
+    const pre = await app.inject({
+      method: 'OPTIONS', url: '/demo_one/search',
+      headers: {
+        origin: 'https://example.com',
+        'access-control-request-method': 'GET',
+        'access-control-request-headers': 'authorization,content-type',
+      },
+    })
+    assert.equal(pre.statusCode, 204)
+    assert.equal(pre.headers['access-control-allow-origin'], 'https://example.com')
+    assert.equal(pre.headers['access-control-allow-credentials'], 'true')
+    assert.match(String(pre.headers['access-control-allow-headers']), /authorization/)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('/datasources：只列已加载且启用的源，形状与 Go 版一致', async () => {
   const { app, root } = await makeApp()
   try {

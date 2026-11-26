@@ -83,6 +83,32 @@ export function buildServer(deps: ApiDeps): FastifyInstance {
     void reply.code(status).send({ statusCode: status, error: e.name ?? 'Error', message: e.message ?? '' })
   })
 
+  // 网关定位：任意来源都能带 Cookie 调用。浏览器规范不允许 `*` 配 credentials，
+  // 所以这里回显 Origin（效果等同开放），而不是写死通配符。
+  app.addHook('onRequest', async (req, reply) => {
+    const origin = req.headers.origin
+    if (typeof origin === 'string' && origin !== '') {
+      reply
+        .header('access-control-allow-origin', origin)
+        .header('access-control-allow-credentials', 'true')
+        .header('vary', 'Origin')
+        .header('access-control-expose-headers', 'x-request-id, x-tz-offset')
+    }
+    if (req.method === 'OPTIONS') {
+      const requested = req.headers['access-control-request-headers']
+      reply
+        .header('access-control-allow-methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
+        .header(
+          'access-control-allow-headers',
+          typeof requested === 'string' && requested !== ''
+            ? requested
+            : 'authorization, content-type, x-api-key, x-tt-token',
+        )
+        .header('access-control-max-age', '600')
+      void reply.code(204).send()
+    }
+  })
+
   app.addHook('onRequest', async (req, reply) => {
     reply.header('x-request-id', req.id)
     // 平台时区：面板 fmtDate 据此显示时间（UTC+8），与浏览器所在时区无关

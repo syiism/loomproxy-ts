@@ -167,6 +167,8 @@ Monitor 早于 Access/Billing/RateLimit；IPBlock 晚于 CORS；RequiredParams �
 | GET | `/endpoints` | 按套餐裁剪的端点清单（必须登录归属，401 文案见 §3） |
 | GET | `/announcement` | `{content, maintenance}` |
 
+**CORS**：网关定位为任意来源可带 Cookie 调用。`onRequest` 回显请求的 `Origin`（不写 `*`——规范不允许 `*` 配 credentials）、带 `Access-Control-Allow-Credentials: true`；`OPTIONS` 预检直接 204，放行 GET/POST/PUT/PATCH/DELETE/OPTIONS 与常用鉴权头。
+
 ### 6.2 用户域
 
 | 方法 | 路径 | 前端方法 |
