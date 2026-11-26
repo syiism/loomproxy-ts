@@ -116,6 +116,14 @@ reload(code, force?):
 管理端点 `POST /admin/sources/:code/reload?force=1` 可跳过第 0 步短路（强制重试/重落声明）；
 普通面板按钮不带该参数。
 
+**分类静态数据**：协议层红果 landpage 的 `core/explore-selectors.json` 是 5 份完全相同的 30KB
+快照，插件 `src/explore.ts` 实际不用，已连同 `createHgExplore` 一并删除；实际在用的分类表收敛到各
+插件 `src/categories.ts`，协议层只留 `FQ_CLASS_MAP`。
+小说/漫画/短剧/漫剧的分类正本改为 `new_category/front/v` 动态接口的 2026-11-26 抓取快照：
+`FQ_CATEGORY_TABS`（4 个 tab：男生/女生/有声书/出版）+ `FQ_CATEGORIES`（194 项），只留 id/name，
+`NC_GROUP_PARAM` / `COMIC_CATEGORIES` 由它派生；听书仍用 fq-hg-mini 的 `TTS_CATEGORIES`（222 项）。
+旧静态 13 项漫画表只有 6/13 在动态树里，不再作为正本。改这些数据必须 bump 版本。
+
 **视频取流（短剧 / 漫剧）**：`fq_drama` / `fq_manju` 的 CENC 解析优先走 anonymous V5：
 `api5-normal-sinfonlinea.fqnovel.com/novel/player/multi_video_model/player/v1/` + `dr_scene=player`
 + gzip body + V5 全签名信封（协议常量在 `protocol/sign/v5-{anon,tables}.mjs`，移植自 GPL-3.0

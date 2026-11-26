@@ -80,9 +80,16 @@
                 <span class="kbd">{{ e.method }}</span>
                 <code class="font-mono text-xs">{{ e.path }}</code>
               </div>
-              <div class="flex flex-wrap items-center gap-1.5">
-                <span class="text-xs text-text-muted">{{ e.description }}</span>
-                <span v-for="p in e.params" :key="p" class="px-1.5 py-0.5 bg-surface-alt border border-border rounded font-mono text-xs text-text-muted">{{ p }}</span>
+              <div class="mt-2 grid grid-cols-[2.5rem_1fr] gap-x-2 gap-y-1 text-xs">
+                <span class="text-text-muted">说明</span>
+                <span class="text-text-muted leading-relaxed">{{ e.description }}</span>
+                <span class="text-text-muted">参数</span>
+                <span class="flex flex-wrap items-center gap-1.5">
+                  <template v-if="e.params.length">
+                    <span v-for="p in e.params" :key="p" class="px-1.5 py-0.5 bg-surface-alt border border-border rounded font-mono text-xs text-text-muted">{{ p }}</span>
+                  </template>
+                  <span v-else class="text-text-muted">—</span>
+                </span>
               </div>
             </div>
           </div>
