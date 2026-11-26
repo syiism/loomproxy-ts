@@ -11,11 +11,11 @@ const outputs = []
 
 // 七猫：ranks + categories + tags → qm_novel/src/columns.generated.ts
 {
-  const ranks = read('qm/qm_ranks.json')
-  const tags = read('qm/qm_tags.json')
+  const ranks = read('qm_novel/qm_ranks.json')
+  const tags = read('qm_novel/qm_tags.json')
   const columns = [...(ranks.ranks ?? []), ...(ranks.categories ?? []), ...(tags.tags ?? [])]
   const content = [
-    '// 由 tools/gen-static-dicts.mjs 从 tools/data/static/qm/*.json 生成，勿手改。',
+    '// 由 tools/gen-static-dicts.mjs 从 tools/data/static/qm_novel/*.json 生成，勿手改。',
     'export type Column = { kind: "rank" | "category" | "tag"; name: string; id: string; tab?: string }',
     'export const COLUMNS: Column[] = [',
     ...columns.map((c) => `  { kind: ${JSON.stringify(c.kind)}, name: ${JSON.stringify(c.name)}, id: ${JSON.stringify(c.id)}${c.tab ? `, tab: ${JSON.stringify(c.tab)}` : ''} },`),
